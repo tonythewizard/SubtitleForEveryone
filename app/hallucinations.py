@@ -13,13 +13,14 @@ _CREDIT = re.compile(
     r'[^.!?\n]{0,115}?\b(?:amara|amra)\s*\.?\s*org\b[.!?]*'
 )
 _QTSS = re.compile(r'(?i)\b(?:sottotitoli|subtitles)\s+(?:a\s+cura\s+di\s+)?QTSS\b[.!?]*')
+_BLANK_AUDIO = re.compile(r'\[BLANK_AUDIO\]', re.IGNORECASE)
 _LONE_DOMAIN = re.compile(r'(?i)^[\s\-–—.:,;]*\b(?:amara|amra)\s*\.?\s*org\b[\s.!?]*$')
 
 
 def clean_asr_text(text: str) -> str:
     if not isinstance(text, str) or not text.strip():
         return ''
-    cleaned = _CREDIT.sub(' ', text)
+    cleaned = _CREDIT.sub(' ', _BLANK_AUDIO.sub(' ', text))
     cleaned = _QTSS.sub(' ', cleaned)
     # Entire isolated hallucination, but never scrub normal speech about the website.
     if _LONE_DOMAIN.fullmatch(cleaned):

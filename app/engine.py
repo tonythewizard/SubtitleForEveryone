@@ -43,7 +43,8 @@ def nvidia_gpus():
     try:
         raw = subprocess.check_output(
             [exe, '--query-gpu=index,name,memory.total', '--format=csv,noheader,nounits'],
-            text=True, stderr=subprocess.STDOUT, timeout=2)
+            text=True, stderr=subprocess.STDOUT, timeout=2,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         result = []
         for line in raw.splitlines():
             parts = [p.strip() for p in line.split(',', 2)]

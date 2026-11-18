@@ -1,4 +1,4 @@
-"""Microphone and Windows per-application audio capture.
+"""Windows playback and per-application audio capture.
 
 A separate worker per source avoids mixing people's words. Windows per-process capture
 uses ProcTap's WASAPI PROCESS_LOOPBACK support. No virtual audio driver needed.
@@ -56,21 +56,6 @@ def get_process_pid(executable:str)->int|None:
     return (roots[0] if roots else choices[0]).pid
 
 
-def microphone_devices()->list[tuple[int,str]]:
-    try:
-        import sounddevice as sd
-        return [(i,f'{v["name"]} [{i}]') for i,v in enumerate(sd.query_devices()) if v['max_input_channels']>0]
-    except Exception:return []
-
-
-def default_microphone_device():
-    try:
-        import sounddevice as sd
-        index=int(sd.default.device[0])
-        return index if index>=0 else None
-    except (ImportError, OSError, ValueError, TypeError, IndexError):
-        return None
-
 class SourceCapture(Thread):
     def __init__(self,source,output_queue:Queue,stop:Event,error_callback,threshold_db=-34,low_latency=True):
         super().__init__(daemon=True,name='capture-'+source['id'])
@@ -88,32 +73,37 @@ class SourceCapture(Thread):
 
     def run(self):
         try:
-            if self.source['kind']=='mic':self._capture_mic()
+            if self.source['kind']=='system':self._capture_system()
             else:self._capture_process()
         except Exception as ex:
             if not self.stop_event.is_set(): self.error_callback(f'{self.source["name"]}: {ex}')
 
-    def _capture_mic(self):
-        import sounddevice as sd
-        def callback(indata,frames,time_info,status):
-            if not self.stop_event.is_set():self._emit(indata.copy().tobytes())
-        device=self.source.get('device',None)
-        if device=='':device=None
-        rates=[CAPTURE_RATE,44100]
-        try:
-            default_rate=int(sd.query_devices(device, 'input')['default_samplerate'])
-            if default_rate not in rates:rates.append(default_rate)
-        except Exception:pass
-        last_error=None
-        for rate in rates:
+    def _capture_system(self):
+        import pyaudiowpatch as pa
+
+        previous_error = None
+        while not self.stop_event.is_set():
             try:
-                sd.check_input_settings(device=device,channels=1,samplerate=rate,dtype='float32')
-                break
-            except Exception as ex:last_error=ex
-        else:raise RuntimeError(f'Nessun formato microfono compatibile: {last_error}')
-        with sd.InputStream(device=device,channels=1,samplerate=rate,dtype='float32',
-                            blocksize=int(rate*(.02 if self.low_latency else .05)),callback=callback):
-            self._buffer_loop(channels=1,capture_rate=rate)
+                with pa.PyAudio() as audio:
+                    output = audio.get_default_wasapi_loopback()
+                    channels = output["maxInputChannels"]
+                    rate = int(output["defaultSampleRate"])
+
+                    def callback(data, frames, timing, status):
+                        self._emit(data)
+                        return None, pa.paContinue
+
+                    with audio.open(format=pa.paFloat32, channels=channels, rate=rate,
+                                    input=True, input_device_index=output["index"],
+                                    frames_per_buffer=rate // 50, stream_callback=callback) as stream:
+                        previous_error = None
+                        self._buffer_loop(channels, capture_rate=rate, stream_active=stream.is_active)
+            except (OSError, LookupError) as error:
+                message = f"Uscita audio Windows non disponibile: {error}"
+                if message != previous_error and not self.stop_event.is_set():
+                    self.error_callback(message)
+                previous_error = message
+            self.stop_event.wait(1)
 
     def _capture_process(self):
         # proc-tap 1.1 exposes ProcessAudioCapture (the old ProcTap API was
@@ -138,7 +128,7 @@ class SourceCapture(Thread):
                     except Exception:pass
             self.stop_event.wait(2)
 
-    def _buffer_loop(self,channels:int,process_pid:int|None=None,capture_rate:int=CAPTURE_RATE):
+    def _buffer_loop(self,channels:int,process_pid:int|None=None,capture_rate:int=CAPTURE_RATE,stream_active=None):
         # Lower end-of-speech delay; preserve a short pre-roll so the first phoneme is not lost.
         active=[];total=0;silence=0;last_check=time.monotonic()
         preroll=deque();preroll_samples=0
@@ -155,7 +145,14 @@ class SourceCapture(Thread):
                 last_check=time.monotonic()
                 if get_process_pid(self.source['process'])!=process_pid:break
             try:pcm=self.audio_q.get(timeout=.2)
-            except Empty:continue
+            except Empty:
+                if stream_active is None:
+                    continue
+                if not stream_active():
+                    break
+                if not active:
+                    continue
+                pcm = bytes((capture_rate // 5) * channels * 4)
             data=np.frombuffer(pcm,dtype=np.float32)
             if not len(data) or len(data)%channels:continue
             if channels>1:data=data.reshape(-1,channels).mean(axis=1)

@@ -6,4 +6,6 @@ __pycache__/
 /dist/
 /bundled_models/
 /whisper-vulkan/
+/whisper-vulkan-build/
+/vk-build/
 .env
