@@ -3,15 +3,6 @@ from time import monotonic
 
 from .settings import ROOT
 
-OUTPUT_LANGUAGES = {
-    "it": "Italiano",
-    "en": "Inglese",
-    "es": "Spagnolo",
-    "fr": "Francese",
-    "de": "Tedesco",
-}
-
-
 class Translator:
     def __init__(self):
         self.routes = {}

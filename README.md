@@ -13,6 +13,9 @@ Installa Python 3.12 x64 con il launcher `py` e Visual Studio Build Tools con C+
 3. Trascina l’area del testo per spostare la finestra e usa l’angolo inferiore destro per ridimensionarla. Dal pannello principale puoi scegliere il font, il colore e la dimensione del testo, regolare l’opacità, impostare la priorità in primo piano e riattivare la barra del titolo.
 4. Il **Monitor sottotitoli** mostra l’ultima frase in tempo reale. **Prova sottotitoli** visualizza un esempio anche con la trascrizione in pausa. Per i video a schermo intero, usa la modalità finestra senza bordi se il player in modalità esclusiva copre i sottotitoli.
 5. La **X** del pannello principale lo nasconde nell’area di notifica. Dall’icona puoi riaprire il pannello, avviare o mettere in pausa la trascrizione, mostrare o nascondere i sottotitoli e uscire.
+6. A trascrizione in pausa, regola il cursore **Velocità – Qualità**. Verso Velocità vedrai anteprime più brevi. Verso Qualità Whisper usa più contesto, aspetta la fine della frase e presenta i sottotitoli in ordine, dividendoli in più schermate quando serve. Se l’elaborazione resta indietro a lungo, la coda ha un limite.
+
+In **Impostazioni** puoi seguire la lingua di Windows oppure scegliere italiano, inglese, spagnolo, francese o tedesco. Il cambio riavvia l’interfaccia e riprende una trascrizione attiva. Puoi abilitare l’avvio dell’app all’accesso a Windows e controllare le release pubbliche di GitHub manualmente o all’apertura dell’app.
 
 ## Accelerazione GPU
 

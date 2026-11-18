@@ -34,7 +34,7 @@ def vulkan_gpus():
 
 
 class VulkanWhisper:
-    def __init__(self, size, index, stop_event):
+    def __init__(self, size, index, stop_event, beam_size=1):
         directory = Path(os.environ.get('SUBTITLEFOREVERYONE_VULKAN_DIR') or
                          BUNDLED_MODELS.parent / 'whisper-vulkan').resolve()
         executable = directory / 'whisper-server.exe'
@@ -48,12 +48,13 @@ class VulkanWhisper:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
         self.client = httpx.Client(base_url=f'http://127.0.0.1:{port}', trust_env=False)
+        self.decode_timeout = 10 if beam_size == 1 else 45
         self.log = TemporaryFile()
         self.process = None
         try:
             self.process = subprocess.Popen(
                 [str(executable), '-m', str(model), '--host', '127.0.0.1',
-                 '--port', str(port), '--no-flash-attn', '-bs', '1', '-bo', '1'],
+                 '--port', str(port), '--no-flash-attn', '-bs', str(beam_size), '-bo', '1'],
                 cwd=directory, env=dict(os.environ, GGML_VK_VISIBLE_DEVICES=str(index)),
                 stdout=self.log, stderr=subprocess.STDOUT,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -96,7 +97,7 @@ class VulkanWhisper:
                                'response_format':'json' if language else 'verbose_json',
                                'no_language_probabilities':'true',
                                'temperature':'0', 'temperature_inc':'0'},
-            files={'file':('clip.wav', buffer.getvalue(), 'audio/wav')}, timeout=10)
+            files={'file':('clip.wav', buffer.getvalue(), 'audio/wav')}, timeout=self.decode_timeout)
         response.raise_for_status()
         body = response.json()
         if not isinstance(body.get('text'), str):

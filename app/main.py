@@ -1,20 +1,26 @@
 import sys
-from threading import Lock
+from collections import deque
+from functools import partial
+from pathlib import Path
+from threading import Lock, Thread
 from time import monotonic
 
+import httpx
 import psutil
-from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPen, QPixmap
+from PySide6.QtCore import QLibraryInfo, QObject, QPoint, QProcess, QRect, QRectF, QTimer, QTranslator, QUrl, Qt, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QColorDialog, QComboBox, QFontComboBox, QFormLayout, QGraphicsDropShadowEffect,
-    QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizeGrip, QSlider, QSpinBox,
+    QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QScrollArea, QSizeGrip, QSlider, QSpinBox,
     QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 from .audio import CaptureManager, LiveClipQueue
 from .engine import ASRWorker, nvidia_gpus
 from .settings import Settings
-from .translation import OUTPUT_LANGUAGES
+from .i18n import LANGUAGES, resolve_language, text
+from .profile import DEFAULT_PROFILE, PROFILES, recognition_profile
+from . import startup, updates
 from .vulkan import vulkan_gpus
 
 
@@ -45,32 +51,48 @@ def product_icon():
 
 
 class Caption:
-    def __init__(self):
+    def __init__(self, sequential=False):
         self.lock = Lock()
         self.text = ""
         self.time = 0
+        self.until = 0
+        self.pending = deque(maxlen=48) if sequential else None
 
     def publish(self, text):
         with self.lock:
-            self.text = text
-            self.time = monotonic()
+            if self.pending is not None:
+                if text:
+                    self.pending.append(text)
+            else:
+                self.text = text
+                self.time = monotonic()
 
-    def read(self, seconds):
+    def read(self, seconds, fit=None):
         with self.lock:
-            return self.text if monotonic() - self.time < seconds else ""
+            now = monotonic()
+            if self.pending is not None and now >= self.until and self.pending:
+                self.text = self.pending.popleft()
+                if fit:
+                    self.text, remainder = fit(self.text)
+                    if remainder:
+                        self.pending.appendleft(remainder)
+                self.time = now
+                self.until = now + max(1.0, min(6.0, len(self.text.split()) / 4))
+            return self.text if now - self.time < seconds else ""
 
 
 class Events(QObject):
     status = Signal(object, str)
     detail = Signal(object, str)
+    update = Signal(str, str)
 
 
 class AudioMeter(QWidget):
-    def __init__(self):
+    def __init__(self, tr):
         super().__init__()
         self.level = 0.0
         self.setFixedSize(80, 20)
-        self.setAccessibleName("Livello audio")
+        self.setAccessibleName(tr("meter"))
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -97,9 +119,9 @@ class DragBar(QLabel):
 
 
 class CaptionWindow(QWidget):
-    def __init__(self, settings):
+    def __init__(self, settings, tr):
         super().__init__()
-        self.setWindowTitle("Finestra sottotitoli")
+        self.setWindowTitle(tr("caption_window"))
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumSize(310, 105)
@@ -121,9 +143,9 @@ class CaptionWindow(QWidget):
         self.toolbar = QWidget()
         toolbar = QHBoxLayout(self.toolbar)
         toolbar.setContentsMargins(0, 0, 0, 0)
-        handle = DragBar("   Sottotitoli · trascina per spostare")
+        handle = DragBar(tr("drag"))
         handle.setStyleSheet("background: #192431; color: white; border-radius: 7px; padding: 6px;")
-        hide = QPushButton("Nascondi")
+        hide = QPushButton(tr("hide"))
         hide.clicked.connect(self.hide)
         mark = QLabel()
         mark.setPixmap(self.windowIcon().pixmap(24))
@@ -138,7 +160,7 @@ class CaptionWindow(QWidget):
         self.caption.setWordWrap(True)
         self.caption.setMinimumWidth(0)
         self.caption.setMinimumHeight(0)
-        self.caption.setAccessibleName("Sottotitoli in tempo reale")
+        self.caption.setAccessibleName(tr("caption_access"))
         self.shadow = QGraphicsDropShadowEffect(self.caption)
         self.shadow.setColor(QColor("#000000"))
         self.shadow.setBlurRadius(8)
@@ -167,21 +189,38 @@ class CaptionWindow(QWidget):
     def set_title_visible(self, visible):
         self.toolbar.setVisible(visible)
 
+    def fit_caption(self, text):
+        words = text.split()
+        bounds = self.caption.rect().adjusted(8, 8, -8, -8)
+        metrics = self.caption.fontMetrics()
+        for count in range(len(words), 1, -1):
+            page = " ".join(words[:count])
+            if metrics.boundingRect(bounds, Qt.TextFlag.TextWordWrap, page).height() <= bounds.height():
+                return page, " ".join(words[count:])
+        return words[0], " ".join(words[1:])
+
 
 class ControlWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.settings = Settings()
+        self.language = resolve_language(self.settings.get("ui_language", "auto"))
+        self.t = partial(text, self.language)
         self.events = Events(self)
         self.events.status.connect(self.on_status)
         self.events.detail.connect(self.on_detail)
+        self.events.update.connect(self.on_update_result)
+        self.update_in_progress = False
+        self.update_message = ""
+        self.preferences = None
+        self.relaunch = None
         self.worker = None
         self.previous_worker = None
         self.exiting = False
         self.captures = None
         self.caption = Caption()
         self.preview_until = 0
-        self.floating = CaptionWindow(self.settings)
+        self.floating = CaptionWindow(self.settings, self.t)
         self.setWindowTitle("SubtitleForEveryone")
         self.setMinimumWidth(600)
         control_font = self.font()
@@ -214,21 +253,24 @@ class ControlWindow(QWidget):
         title = QLabel("SubtitleForEveryone")
         title.setStyleSheet("font-size: 25px; font-weight: 700;")
         titles.addWidget(title)
-        tagline = QLabel("Sottotitoli in tempo reale per l’audio di Windows")
+        tagline = QLabel(self.t("tagline"))
         tagline.setStyleSheet("color: #a9bed2;")
         titles.addWidget(tagline)
         heading.addLayout(titles, 1)
+        preferences = QPushButton(self.t("settings"))
+        preferences.clicked.connect(self.show_preferences)
+        heading.addWidget(preferences)
         layout.addLayout(heading)
 
         monitor = QFrame()
         monitor.setObjectName("monitor")
         monitor_layout = QVBoxLayout(monitor)
         monitor_layout.setContentsMargins(16, 12, 16, 14)
-        monitor_title = QLabel("Monitor sottotitoli")
+        monitor_title = QLabel(self.t("monitor"))
         monitor_title.setObjectName("monitorTitle")
         monitor_header = QHBoxLayout()
         monitor_header.addWidget(monitor_title, 1)
-        self.audio_meter = AudioMeter()
+        self.audio_meter = AudioMeter(self.t)
         monitor_header.addWidget(self.audio_meter)
         monitor_layout.addLayout(monitor_header)
         self.monitor_text = QLabel()
@@ -238,34 +280,36 @@ class ControlWindow(QWidget):
         monitor_layout.addWidget(self.monitor_text)
         layout.addWidget(monitor)
 
-        form = QFormLayout()
+        form_widget = QWidget()
+        form = QFormLayout(form_widget)
+        form.setContentsMargins(0, 0, 0, 0)
         self.source = QComboBox()
         self.source.setEditable(True)
         self.source.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.source.lineEdit().setPlaceholderText("Nome del processo, ad esempio chrome.exe")
+        self.source.lineEdit().setPlaceholderText(self.t("process_hint"))
         self.refresh_sources()
-        refresh = QPushButton("Aggiorna elenco")
+        refresh = QPushButton(self.t("refresh"))
         refresh.clicked.connect(self.refresh_sources)
         sources = QHBoxLayout()
         sources.addWidget(self.source, 1)
         sources.addWidget(refresh)
-        audio_label = QLabel("&Sorgente audio")
+        audio_label = QLabel(self.t("source"))
         audio_label.setBuddy(self.source)
         form.addRow(audio_label, sources)
         self.model = QComboBox()
         for name in ("tiny", "base", "small", "medium", "large-v3"):
             self.model.addItem(name)
         self.model.setCurrentText(self.settings.get("asr_model", "tiny"))
-        form.addRow("&Modello Whisper", self.model)
+        form.addRow(self.t("model"), self.model)
         self.subtitle_language = QComboBox()
-        self.subtitle_language.addItem("Lingua del parlato (automatica)", "auto")
-        for code, label in OUTPUT_LANGUAGES.items():
+        self.subtitle_language.addItem(self.t("original"), "auto")
+        for code, label in LANGUAGES.items():
             self.subtitle_language.addItem(label, code)
         self.subtitle_language.setCurrentIndex(max(0, self.subtitle_language.findData(
             self.settings.get("subtitle_language", "auto"))))
         self.subtitle_language.currentIndexChanged.connect(
             lambda _: self.settings.set("subtitle_language", self.subtitle_language.currentData()))
-        form.addRow("&Lingua dei sottotitoli", self.subtitle_language)
+        form.addRow(self.t("subtitle_language"), self.subtitle_language)
         self.backend = QComboBox()
         self.backend.addItem("CPU", "cpu")
         for index, name, _ in nvidia_gpus():
@@ -273,7 +317,19 @@ class ControlWindow(QWidget):
         for index, name in vulkan_gpus():
             self.backend.addItem(f"Vulkan · {name}", f"vulkan:{index}")
         self.backend.setCurrentIndex(max(0, self.backend.findData(self.settings.get("asr_device"))))
-        form.addRow("&Elaborazione", self.backend)
+        form.addRow(self.t("compute"), self.backend)
+        self.profile_slider = QSlider(Qt.Orientation.Horizontal)
+        self.profile_slider.setRange(0, len(PROFILES) - 1)
+        self.profile_slider.setValue(self.settings.get("recognition_profile", DEFAULT_PROFILE))
+        self.profile_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.profile_slider.setTickInterval(1)
+        self.profile_slider.setAccessibleName(self.t("balance"))
+        self.profile_slider.valueChanged.connect(lambda value: self.settings.set("recognition_profile", value))
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel(self.t("speed")))
+        profile_row.addWidget(self.profile_slider, 1)
+        profile_row.addWidget(QLabel(self.t("quality")))
+        form.addRow(profile_row)
 
         self.font_picker = QFontComboBox()
         self.font_picker.setCurrentFont(QFont(self.settings.get("caption_font", QApplication.font().family())))
@@ -282,12 +338,12 @@ class ControlWindow(QWidget):
         if not self.text_color.isValid():
             self.text_color = QColor("#ffffff")
         self.color_button = QPushButton()
-        self.color_button.setAccessibleName("Colore del testo dei sottotitoli")
+        self.color_button.setAccessibleName(self.t("text_color"))
         self.color_button.clicked.connect(self.choose_text_color)
         text_style = QHBoxLayout()
         text_style.addWidget(self.font_picker, 1)
         text_style.addWidget(self.color_button)
-        font_label = QLabel("&Font e colore")
+        font_label = QLabel(self.t("font_color"))
         font_label.setBuddy(self.font_picker)
         form.addRow(font_label, text_style)
 
@@ -296,7 +352,7 @@ class ControlWindow(QWidget):
         self.font_size.setSuffix(" px")
         self.font_size.setValue(self.settings.get("font_size", 31))
         self.font_size.valueChanged.connect(self.apply_style)
-        form.addRow("&Dimensione testo", self.font_size)
+        form.addRow(self.t("text_size"), self.font_size)
         self.opacity = QSlider(Qt.Orientation.Horizontal)
         self.opacity.setRange(0, 100)
         self.opacity.setValue(self.settings.get("opacity", 65))
@@ -304,33 +360,39 @@ class ControlWindow(QWidget):
         opacity_row = QHBoxLayout()
         opacity_row.addWidget(self.opacity, 1)
         opacity_row.addWidget(self.opacity_value)
-        self.opacity.setAccessibleName("Opacità sfondo")
+        self.opacity.setAccessibleName(self.t("opacity"))
         self.opacity.valueChanged.connect(self.apply_style)
-        form.addRow("Opacità sfondo", opacity_row)
+        form.addRow(self.t("opacity"), opacity_row)
 
-        self.pin = QCheckBox("Sempre in primo piano")
+        self.pin = QCheckBox(self.t("pinned"))
         self.pin.setChecked(self.settings.get("pinned", True))
         self.pin.toggled.connect(self.set_pinned)
         form.addRow(self.pin)
-        self.title_visible = QCheckBox("Mostra barra del titolo dei sottotitoli")
+        self.title_visible = QCheckBox(self.t("show_title"))
         self.title_visible.setChecked(self.settings.get("show_caption_title", False))
         self.title_visible.toggled.connect(self.floating.set_title_visible)
         form.addRow(self.title_visible)
-        layout.addLayout(form)
+        controls = QScrollArea()
+        controls.setFrameShape(QFrame.Shape.NoFrame)
+        controls.setWidgetResizable(True)
+        controls.setWidget(form_widget)
+        controls.setMinimumHeight(min(form_widget.sizeHint().height() + 2,
+                                      max(200, self.screen().availableGeometry().height() - 340)))
+        layout.addWidget(controls, 1)
 
         actions = QHBoxLayout()
-        self.start_button = QPushButton("&Avvia")
+        self.start_button = QPushButton(self.t("start"))
         self.start_button.setObjectName("primary")
         self.start_button.clicked.connect(self.toggle)
-        show = QPushButton("&Mostra finestra")
+        show = QPushButton(self.t("show"))
         show.clicked.connect(self.floating.show)
-        preview = QPushButton("&Prova sottotitoli")
+        preview = QPushButton(self.t("preview"))
         preview.clicked.connect(self.show_preview)
         for button in (self.start_button, show, preview):
             actions.addWidget(button)
         layout.addLayout(actions)
 
-        self.status = QLabel("Scegli tutte le applicazioni o una singola applicazione.")
+        self.status = QLabel(self.t("choose_source"))
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.detail = QLabel()
@@ -345,6 +407,89 @@ class ControlWindow(QWidget):
         self.timer = QTimer(self, interval=100)
         self.timer.timeout.connect(self.refresh_caption)
         self.timer.start()
+        if self.settings.get("check_updates_on_startup", True):
+            QTimer.singleShot(250, self.check_updates)
+
+    def show_preferences(self):
+        if self.preferences is None:
+            self.preferences = QDialog(self)
+            self.preferences.setWindowTitle(self.t("settings"))
+            form = QFormLayout(self.preferences)
+            language = QComboBox()
+            language.addItem(self.t("system_language"), "auto")
+            for code, name in LANGUAGES.items():
+                language.addItem(name, code)
+            language.setCurrentIndex(max(0, language.findData(self.settings.get("ui_language", "auto"))))
+            language.activated.connect(lambda _: self.change_language(language.currentData()))
+            form.addRow(self.t("ui_language"), language)
+            logon = QCheckBox(self.t("auto_start"))
+            logon.setChecked(startup.enabled())
+            logon.toggled.connect(lambda checked: self.change_logon(logon, checked))
+            form.addRow(logon)
+            auto_update = QCheckBox(self.t("update_start"))
+            auto_update.setChecked(self.settings.get("check_updates_on_startup", True))
+            auto_update.toggled.connect(lambda value: self.settings.set("check_updates_on_startup", value))
+            form.addRow(auto_update)
+            self.update_button = QPushButton(self.t("update_check"))
+            self.update_button.setEnabled(not self.update_in_progress)
+            self.update_button.clicked.connect(self.check_updates)
+            form.addRow(self.update_button)
+            self.update_status = QLabel(self.update_message)
+            self.update_status.setWordWrap(True)
+            form.addRow(self.update_status)
+            form.addRow(QLabel(self.t("version", version=updates.installed_version())))
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            buttons.rejected.connect(self.preferences.reject)
+            form.addRow(buttons)
+        self.preferences.exec()
+
+    def change_language(self, language):
+        if language == self.settings.get("ui_language", "auto"):
+            return
+        self.settings.set("ui_language", language)
+        self.relaunch = ["--resume-transcription"] if self.worker else []
+        self.preferences.accept()
+        self.quit_from_tray()
+
+    def change_logon(self, checkbox, value):
+        try:
+            startup.set_enabled(value)
+        except OSError as error:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(not value)
+            checkbox.blockSignals(False)
+            QMessageBox.warning(self.preferences, self.t("settings"), self.t("auto_start_error") + "\n" + str(error))
+
+    def set_update_status(self, key):
+        self.update_message = self.t(key)
+        if self.preferences is not None:
+            self.update_status.setText(self.update_message)
+            self.update_button.setEnabled(not self.update_in_progress)
+
+    def check_updates(self):
+        if self.update_in_progress:
+            return
+        self.update_in_progress = True
+        self.set_update_status("update_wait")
+
+        def fetch():
+            try:
+                with httpx.Client(timeout=6) as client:
+                    result = updates.latest_update(client)
+            except (httpx.HTTPError, ValueError, OSError):
+                result = "failed", ""
+            self.events.update.emit(*result)
+
+        Thread(target=fetch, daemon=True).start()
+
+    def on_update_result(self, result, tag):
+        self.update_in_progress = False
+        self.set_update_status("update_" + result)
+        if result == "available":
+            answer = QMessageBox.question(self.preferences if self.preferences and self.preferences.isVisible() else self,
+                                          self.t("update_check"), self.t("update_found", version=tag))
+            if answer == QMessageBox.StandardButton.Yes:
+                QDesktopServices.openUrl(QUrl(f"{updates.RELEASES}/tag/{tag}"))
 
     def setup_tray(self):
         self.tray = None
@@ -353,11 +498,11 @@ class ControlWindow(QWidget):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray.setToolTip("SubtitleForEveryone")
         self.tray_menu = QMenu(self)
-        self.tray_menu.addAction("Apri SubtitleForEveryone", self.restore_controls)
-        self.tray_toggle = self.tray_menu.addAction("Avvia trascrizione", self.toggle)
-        self.tray_menu.addAction("Mostra / nascondi sottotitoli", self.toggle_floating)
+        self.tray_menu.addAction(self.t("open"), self.restore_controls)
+        self.tray_toggle = self.tray_menu.addAction(self.t("start_tray"), self.toggle)
+        self.tray_menu.addAction(self.t("toggle_captions"), self.toggle_floating)
         self.tray_menu.addSeparator()
-        self.tray_menu.addAction("Esci", self.quit_from_tray)
+        self.tray_menu.addAction(self.t("quit"), self.quit_from_tray)
         self.tray.setContextMenu(self.tray_menu)
         self.tray.activated.connect(self.on_tray_activated)
         self.tray.show()
@@ -382,7 +527,7 @@ class ControlWindow(QWidget):
     def refresh_sources(self):
         previous = self.source.currentText() or self.settings.get("audio_source", "")
         self.source.clear()
-        self.source.addItem("Tutto l’audio delle app", {"kind": "system"})
+        self.source.addItem(self.t("all_apps"), {"kind": "system"})
         processes = {process.info["name"] for process in psutil.process_iter(["name"])
                      if process.info["name"]}
         for name in sorted(processes, key=str.casefold):
@@ -416,7 +561,7 @@ class ControlWindow(QWidget):
         self.apply_style()
 
     def choose_text_color(self):
-        color = QColorDialog.getColor(self.text_color, self, "Colore del testo dei sottotitoli")
+        color = QColorDialog.getColor(self.text_color, self, self.t("text_color"))
         if color.isValid():
             self.text_color = color
             self.settings.set("caption_color", color.name())
@@ -431,10 +576,10 @@ class ControlWindow(QWidget):
         self.floating.show()
 
     def refresh_caption(self):
-        text = "Questa è un’anteprima dei sottotitoli." if monotonic() < self.preview_until else self.caption.read(6)
-        if self.floating.caption.text() != text:
-            self.floating.caption.setText(text)
-        preview = text or ("In attesa del parlato…" if self.worker else "Avvia la trascrizione per vedere qui i sottotitoli.")
+        caption_text = self.t("preview_caption") if monotonic() < self.preview_until else self.caption.read(6, self.floating.fit_caption)
+        if self.floating.caption.text() != caption_text:
+            self.floating.caption.setText(caption_text)
+        preview = caption_text or (self.t("waiting") if self.worker else self.t("monitor_idle"))
         if self.monitor_text.text() != preview:
             self.monitor_text.setText(preview)
         self.audio_meter.set_level(self.captures.input_level() if self.worker else 0.0)
@@ -444,7 +589,7 @@ class ControlWindow(QWidget):
             self.stop()
             return
         if self.previous_worker and self.previous_worker.is_alive():
-            self.status.setText("Whisper sta terminando la sessione precedente. Attendi qualche secondo.")
+            self.status.setText(self.t("stopping"))
             return
         self.previous_worker = None
         name = self.source.currentText().strip()
@@ -452,45 +597,40 @@ class ControlWindow(QWidget):
         source = self.source.itemData(index) if index >= 0 else None
         if source is None:
             if not name or not name.lower().endswith(".exe") or any(c in name for c in "/\\:"):
-                self.status.setText("Seleziona tutto l’audio o inserisci il nome di un processo .exe.")
+                self.status.setText(self.t("invalid_source"))
                 return
             source = {"kind": "process", "process": name}
 
-        self.settings.set("audio_source", name)
+        self.settings.set("audio_source", source.get("process", ""))
         self.settings.set("sources", [dict(source, id="input", name=name, enabled=True)])
         self.settings.set("asr_model", self.model.currentText())
         self.settings.set("asr_device", self.backend.currentData())
-        clips = LiveClipQueue(maxsize=4)
-        self.caption = Caption()
+        profile = recognition_profile(self.settings)
+        clips = LiveClipQueue(maxsize=profile.queue_size)
+        self.caption = Caption(sequential=profile.max_caption_age is None)
         self.preview_until = 0
         session = object()
         self.session = session
         on_detail = lambda message: self.events.detail.emit(session, message)
-        self.worker = ASRWorker(self.settings, clips, self.caption, on_detail, on_state=self.events.status.emit)
-        self.captures = CaptureManager(self.settings, clips, on_detail)
-        self.status.setText("Preparazione del modello… Al primo utilizzo può servire un download.")
+        self.worker = ASRWorker(self.settings, clips, self.caption, on_detail,
+                                on_state=self.events.status.emit, tr=self.t)
+        self.captures = CaptureManager(self.settings, clips, on_detail, tr=self.t)
+        self.status.setText(self.t("preparing"))
         self.detail.clear()
         self.source.setEnabled(False)
         self.model.setEnabled(False)
         self.backend.setEnabled(False)
+        self.profile_slider.setEnabled(False)
         if self.tray:
-            self.tray_toggle.setText("Metti in pausa")
-        self.start_button.setText("&Pausa")
+            self.tray_toggle.setText(self.t("pause_tray"))
+        self.start_button.setText(self.t("pause"))
         self.floating.show()
         self.worker.start()
 
     def on_status(self, worker, stage):
         if worker is not self.worker:
             return
-        messages = {
-            "loading": "Caricamento del modello…",
-            "downloading": "Download del modello in corso. Puoi lasciare aperta l’app.",
-            "repairing": "Ripristino dei file del modello…",
-            "translation": "Preparazione della traduzione locale…",
-            "retry": "Modello non disponibile. Nuovo tentativo tra pochi secondi.",
-            "ready": f"In ascolto · {worker.active_device or 'CPU'} · Whisper {worker.active_model}",
-        }
-        self.status.setText(messages.get(stage, stage))
+        self.status.setText(self.t(stage, device=worker.active_device or "CPU", model=worker.active_model))
         if stage == "ready" and not self.captures.workers:
             self.captures.start()
 
@@ -510,10 +650,11 @@ class ControlWindow(QWidget):
         self.source.setEnabled(True)
         self.model.setEnabled(True)
         self.backend.setEnabled(True)
+        self.profile_slider.setEnabled(True)
         if self.tray:
-            self.tray_toggle.setText("Avvia trascrizione")
-        self.start_button.setText("&Avvia")
-        self.status.setText("In pausa.")
+            self.tray_toggle.setText(self.t("start_tray"))
+        self.start_button.setText(self.t("start"))
+        self.status.setText(self.t("paused"))
         self.detail.clear()
 
     def closeEvent(self, event):
@@ -547,5 +688,17 @@ def main():
     app.setApplicationName("SubtitleForEveryone")
     app.setWindowIcon(product_icon())
     window = ControlWindow()
+    translator = QTranslator(app)
+    translations = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if translator.load(f"qtbase_{window.language}", translations):
+        app.installTranslator(translator)
     window.show()
-    return app.exec()
+    if "--resume-transcription" in sys.argv:
+        QTimer.singleShot(0, window.toggle)
+    status = app.exec()
+    if window.relaunch is not None:
+        args = window.relaunch
+        if not getattr(sys, "frozen", False):
+            args = [str(Path(__file__).resolve().parents[1] / "launch.py"), *args]
+        QProcess.startDetached(sys.executable, args)
+    return status

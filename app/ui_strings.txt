@@ -1,0 +1,66 @@
+caption_window|Finestra sottotitoli|Caption window|Ventana de subtítulos|Fenêtre des sous-titres|Untertitelfenster
+drag|Sottotitoli · trascina per spostare|Captions · drag to move|Subtítulos · arrastra para mover|Sous-titres · glisser pour déplacer|Untertitel · zum Verschieben ziehen
+hide|Nascondi|Hide|Ocultar|Masquer|Ausblenden
+caption_access|Sottotitoli in tempo reale|Live captions|Subtítulos en directo|Sous-titres en direct|Live-Untertitel
+meter|Livello audio|Audio level|Nivel de audio|Niveau audio|Audiopegel
+tagline|Sottotitoli in tempo reale per l’audio di Windows|Live captions for Windows audio|Subtítulos en directo para el audio de Windows|Sous-titres en direct pour l’audio Windows|Live-Untertitel für Windows-Audio
+monitor|Monitor sottotitoli|Caption monitor|Monitor de subtítulos|Aperçu des sous-titres|Untertitelvorschau
+process_hint|Nome del processo, ad esempio chrome.exe|Process name, for example chrome.exe|Nombre del proceso, por ejemplo chrome.exe|Nom du processus, par exemple chrome.exe|Prozessname, z. B. chrome.exe
+refresh|Aggiorna elenco|Refresh list|Actualizar lista|Actualiser la liste|Liste aktualisieren
+source|&Sorgente audio|&Audio source|&Fuente de audio|&Source audio|&Audioquelle
+model|&Modello Whisper|&Whisper model|&Modelo Whisper|&Modèle Whisper|&Whisper-Modell
+original|Lingua del parlato (automatica)|Spoken language (automatic)|Idioma hablado (automático)|Langue parlée (automatique)|Gesprochene Sprache (automatisch)
+subtitle_language|&Lingua dei sottotitoli|&Caption language|&Idioma de subtítulos|&Langue des sous-titres|&Untertitelsprache
+compute|&Elaborazione|&Processing|&Procesamiento|&Traitement|&Verarbeitung
+font_color|&Font e colore|&Font and color|&Fuente y color|&Police et couleur|&Schrift und Farbe
+text_color|Colore del testo dei sottotitoli|Caption text color|Color del texto de los subtítulos|Couleur du texte des sous-titres|Textfarbe der Untertitel
+text_size|&Dimensione testo|&Text size|&Tamaño del texto|&Taille du texte|&Textgröße
+opacity|Opacità sfondo|Background opacity|Opacidad del fondo|Opacité du fond|Hintergrunddeckkraft
+pinned|Sempre in primo piano|Always on top|Siempre visible|Toujours au premier plan|Immer im Vordergrund
+show_title|Mostra barra del titolo dei sottotitoli|Show caption title bar|Mostrar la barra de título de los subtítulos|Afficher la barre de titre des sous-titres|Titelleiste der Untertitel anzeigen
+start|&Avvia|&Start|&Iniciar|&Démarrer|&Starten
+pause|&Pausa|&Pause|&Pausa|&Pause|&Pause
+show|&Mostra finestra|&Show window|&Mostrar ventana|&Afficher la fenêtre|&Fenster anzeigen
+preview|&Prova sottotitoli|&Preview captions|&Probar subtítulos|&Tester les sous-titres|&Untertitel testen
+choose_source|Scegli tutte le applicazioni o una singola applicazione.|Choose all applications or a single application.|Elige todas las aplicaciones o una sola.|Choisissez toutes les applications ou une seule.|Wähle alle Anwendungen oder eine einzelne Anwendung.
+open|Apri SubtitleForEveryone|Open SubtitleForEveryone|Abrir SubtitleForEveryone|Ouvrir SubtitleForEveryone|SubtitleForEveryone öffnen
+start_tray|Avvia trascrizione|Start transcription|Iniciar transcripción|Démarrer la transcription|Transkription starten
+pause_tray|Metti in pausa|Pause transcription|Pausar transcripción|Mettre en pause|Transkription pausieren
+toggle_captions|Mostra / nascondi sottotitoli|Show / hide captions|Mostrar / ocultar subtítulos|Afficher / masquer les sous-titres|Untertitel ein- / ausblenden
+quit|Esci|Quit|Salir|Quitter|Beenden
+all_apps|Tutto l’audio delle app|All app audio|Todo el audio de las aplicaciones|Tout l’audio des applications|Gesamtes App-Audio
+preview_caption|Questa è un’anteprima dei sottotitoli.|This is a caption preview.|Esta es una vista previa de los subtítulos.|Ceci est un aperçu des sous-titres.|Dies ist eine Untertitelvorschau.
+waiting|In attesa del parlato…|Waiting for speech…|Esperando voz…|En attente de parole…|Warte auf Sprache…
+monitor_idle|Avvia la trascrizione per vedere qui i sottotitoli.|Start transcription to see captions here.|Inicia la transcripción para ver los subtítulos aquí.|Démarrez la transcription pour voir les sous-titres ici.|Starte die Transkription, um hier Untertitel zu sehen.
+stopping|Whisper sta terminando la sessione precedente. Attendi qualche secondo.|Whisper is closing the previous session. Wait a few seconds.|Whisper está cerrando la sesión anterior. Espera unos segundos.|Whisper termine la session précédente. Patientez quelques secondes.|Whisper beendet die vorige Sitzung. Warte einige Sekunden.
+invalid_source|Seleziona tutto l’audio o inserisci il nome di un processo .exe.|Select all app audio or enter an .exe process name.|Selecciona todo el audio o escribe el nombre de un proceso .exe.|Sélectionnez tout l’audio ou saisissez le nom d’un processus .exe.|Wähle das gesamte App-Audio oder gib einen .exe-Prozessnamen ein.
+preparing|Preparazione del modello… Al primo utilizzo può servire un download.|Preparing the model… First use may require a download.|Preparando el modelo… El primer uso puede requerir una descarga.|Préparation du modèle… Un téléchargement peut être nécessaire au premier lancement.|Modell wird vorbereitet… Bei der ersten Nutzung kann ein Download nötig sein.
+loading|Caricamento del modello…|Loading the model…|Cargando el modelo…|Chargement du modèle…|Modell wird geladen…
+downloading|Download del modello in corso. Puoi lasciare aperta l’app.|Downloading the model. You can leave the app open.|Descargando el modelo. Puedes dejar la aplicación abierta.|Téléchargement du modèle. Vous pouvez laisser l’application ouverte.|Modell wird heruntergeladen. Die App kann geöffnet bleiben.
+repairing|Ripristino dei file del modello…|Repairing model files…|Reparando los archivos del modelo…|Réparation des fichiers du modèle…|Modelldateien werden repariert…
+translation|Preparazione della traduzione locale…|Preparing local translation…|Preparando la traducción local…|Préparation de la traduction locale…|Lokale Übersetzung wird vorbereitet…
+retry|Modello non disponibile. Nuovo tentativo tra pochi secondi.|Model unavailable. Retrying in a few seconds.|Modelo no disponible. Se volverá a intentar en unos segundos.|Modèle indisponible. Nouvel essai dans quelques secondes.|Modell nicht verfügbar. Neuer Versuch in wenigen Sekunden.
+ready|In ascolto · {device} · Whisper {model}|Listening · {device} · Whisper {model}|Escuchando · {device} · Whisper {model}|À l’écoute · {device} · Whisper {model}|Hört zu · {device} · Whisper {model}
+paused|In pausa.|Paused.|En pausa.|En pause.|Pausiert.
+settings|Impostazioni|Settings|Ajustes|Paramètres|Einstellungen
+ui_language|Lingua dell’interfaccia|Interface language|Idioma de la interfaz|Langue de l’interface|Oberflächensprache
+system_language|Usa la lingua di Windows|Use Windows language|Usar idioma de Windows|Utiliser la langue de Windows|Windows-Sprache verwenden
+auto_start|Esegui all’avvio di Windows|Run at Windows sign-in|Ejecutar al iniciar sesión en Windows|Lancer à l’ouverture de session Windows|Bei Windows-Anmeldung ausführen
+auto_start_error|Impossibile modificare l’avvio con Windows.|Could not change the Windows startup entry.|No se pudo cambiar el inicio con Windows.|Impossible de modifier le lancement avec Windows.|Der Windows-Autostart konnte nicht geändert werden.
+update_start|Controlla aggiornamenti all’avvio dell’app|Check for updates when the app opens|Buscar actualizaciones al abrir la aplicación|Vérifier les mises à jour au lancement|Beim App-Start nach Updates suchen
+update_check|Controlla aggiornamenti|Check for updates|Buscar actualizaciones|Vérifier les mises à jour|Nach Updates suchen
+update_wait|Controllo in corso…|Checking for updates…|Buscando actualizaciones…|Recherche en cours…|Suche läuft…
+update_available|È disponibile una versione più recente.|A newer version is available.|Hay una versión más reciente.|Une version plus récente est disponible.|Eine neuere Version ist verfügbar.
+update_current|Stai usando l’ultima versione disponibile.|You are using the latest available version.|Estás usando la última versión disponible.|Vous utilisez la dernière version disponible.|Du verwendest die neueste verfügbare Version.
+update_unavailable|Nessuna release pubblica disponibile su GitHub.|No public release is available on GitHub.|No hay versiones públicas disponibles en GitHub.|Aucune version publique n’est disponible sur GitHub.|Auf GitHub ist keine öffentliche Version verfügbar.
+update_failed|Controllo non riuscito. Riprova più tardi.|The update check failed. Try again later.|No se pudieron buscar actualizaciones. Inténtalo más tarde.|La recherche a échoué. Réessayez plus tard.|Die Update-Suche ist fehlgeschlagen. Versuche es später erneut.
+update_found|È disponibile la versione {version}. Aprire la release su GitHub?|Version {version} is available. Open the release on GitHub?|Está disponible la versión {version}. ¿Abrir la publicación en GitHub?|La version {version} est disponible. Ouvrir la publication sur GitHub ?|Version {version} ist verfügbar. Release auf GitHub öffnen?
+version|Versione {version}|Version {version}|Versión {version}|Version {version}|Version {version}
+speed|Velocità|Speed|Velocidad|Vitesse|Geschwindigkeit
+quality|Qualità|Quality|Calidad|Qualité|Qualität
+balance|Compromesso velocità e qualità|Speed and quality balance|Equilibrio entre velocidad y calidad|Équilibre entre vitesse et qualité|Verhältnis von Geschwindigkeit zu Qualität
+gpu_fallback|GPU non disponibile. Passaggio a CPU INT8.|GPU unavailable. Switching to CPU INT8.|GPU no disponible. Cambiando a CPU INT8.|GPU indisponible. Passage au CPU INT8.|GPU nicht verfügbar. Wechsel zu CPU INT8.
+whisper_error|Errore Whisper: {message}|Whisper error: {message}|Error de Whisper: {message}|Erreur Whisper : {message}|Whisper-Fehler: {message}
+translation_error|Traduzione non disponibile. Mostro il testo originale.|Translation unavailable. Showing the original text.|Traducción no disponible. Se muestra el texto original.|Traduction indisponible. Affichage du texte original.|Übersetzung nicht verfügbar. Der Originaltext wird angezeigt.
+audio_error|Cattura audio non riuscita: {message}|Audio capture failed: {message}|Error al capturar audio: {message}|Échec de la capture audio : {message}|Audioaufnahme fehlgeschlagen: {message}
+queue_full|Coda piena. Parte dell’audio è stata saltata.|Queue full. Some audio was skipped.|Cola llena. Se omitió parte del audio.|File pleine. Une partie de l’audio a été ignorée.|Warteschlange voll. Ein Teil des Audios wurde übersprungen.

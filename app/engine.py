@@ -15,8 +15,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from functools import partial
 import sysconfig
 from .hallucinations import clean_asr_text, accept_segment
+from .i18n import text
+from .profile import recognition_profile
 from .settings import ROOT, BUNDLED_MODELS
 from .translation import Translator
 from .vulkan import VulkanWhisper
@@ -76,9 +79,10 @@ def _without_overlap(words, previous):
 
 
 class ASRWorker(Thread):
-    def __init__(self, settings, clips:Queue, state, logs, on_state=None):
+    def __init__(self, settings, clips:Queue, state, logs, on_state=None, tr=None):
         super().__init__(daemon=True, name='whisper-inference')
         self.settings=settings; self.clips=clips; self.state=state; self.logs=logs
+        self.tr = tr or partial(text, "en")
         self.stop_event=Event()
         self.decoding=Event()
         self.vulkan=None
@@ -162,10 +166,10 @@ class ASRWorker(Thread):
         size, requested_device = key
         if requested_device.startswith('vulkan:'):
             import numpy as np
-            self.vulkan=VulkanWhisper(size,int(requested_device.split(':')[1]),self.stop_event)
+            self.vulkan=VulkanWhisper(size,int(requested_device.split(':')[1]),self.stop_event,
+                                       beam_size=recognition_profile(self.settings).beam_size)
             self.vulkan.decode(np.zeros(16000,dtype=np.float32),'en')
             self.active_device=requested_device
-            self.logs(f'Whisper {size} pronto su Vulkan GPU {requested_device.split(":")[1]}.')
             return self.vulkan
         source=self._whisper_model_path(size)
         try:
@@ -206,32 +210,33 @@ class ASRWorker(Thread):
                     beam_size=1, without_timestamps=True, max_new_tokens=1)
                 list(segments)
                 self.active_device=f'cuda:{gpu_index}'
-                self.logs(f'Whisper {size} pronto su NVIDIA CUDA GPU {gpu_index}.')
                 return model
             except Exception as ex:
                 if self._binary_corrupt(ex):
                     raise
-                self.logs('CUDA non disponibile ('+str(ex)[:150]+'); ripiego su CPU INT8.')
+                self.logs(self.tr("gpu_fallback"))
         threads=max(2,min(16,os.cpu_count() or 4))
         model=WhisperModel(source,device='cpu',compute_type='int8',cpu_threads=threads,
                            num_workers=1,**kwargs)
         self.active_device='cpu'
-        self.logs(f'Whisper {size} pronto su CPU INT8 ({threads} thread).')
         return model
 
     def _decode(self,model,audio,cfg):
         language = None
+        profile = recognition_profile(cfg)
         if isinstance(model,VulkanWhisper):
             raw,detected=model.decode(audio,language)
             if cfg.get('hallucination_guard',True):raw=clean_asr_text(raw)
             return raw,detected
         result,info=model.transcribe(
-            audio, language=language, task='transcribe', beam_size=1, best_of=1,
+            audio, language=language, task='transcribe', beam_size=profile.beam_size, best_of=1,
             condition_on_previous_text=False, vad_filter=bool(cfg.get('vad_enabled',True)),
-            vad_parameters={'min_speech_duration_ms':120,'min_silence_duration_ms':160,'speech_pad_ms':90}
+            vad_parameters={'min_speech_duration_ms':120 if profile.previews else 80,
+                            'threshold':.5 if profile.previews else .38, 'min_silence_duration_ms':160,
+                            'speech_pad_ms':90 if profile.previews else 200}
                 if cfg.get('vad_enabled',True) else None,
             temperature=0, word_timestamps=False,
-            without_timestamps=bool(cfg.get('low_latency',True)), no_speech_threshold=0.55,
+            without_timestamps=True, no_speech_threshold=0.55,
             log_prob_threshold=-0.9,
         )
         clean=[]
@@ -264,7 +269,9 @@ class ASRWorker(Thread):
         while not self.stop_event.is_set():
             cfg=self.settings.snapshot()
             desired=(cfg.get('asr_model','tiny'),cfg.get('asr_device','auto'))
-            max_age = float(cfg.get('max_caption_age', 10 if desired[0] == 'large-v3' else 4))
+            max_age = cfg.get("max_caption_age", recognition_profile(cfg).max_caption_age)
+            if max_age is not None and desired[0] == "large-v3":
+                max_age = max(max_age, 10)
             # Until automatic GPU certification is implemented, the safe
             # baseline must start independently of any GPU runtime.
             requested=(desired[0],'cpu') if desired[1]=='auto' or desired in cuda_failed else desired
@@ -275,16 +282,15 @@ class ASRWorker(Thread):
                 self.report_state('loading')
                 try:
                     self._close_vulkan()
-                    self.logs(f'Preparazione Whisper {requested[0]} ({requested[1]})...')
                     model=self._create_model(requested)
                     current=requested
                     self.active_model=requested[0]
                     self.report_state('ready')
                 except Exception as ex:
-                    self.logs('Whisper non disponibile: '+str(ex))
+                    self.logs(self.tr("whisper_error", message=str(ex)))
                     if str(requested[1]).startswith(('cuda','vulkan:')):
                         cuda_failed.add(desired)
-                        self.logs('GPU esclusa per questa sessione: riprovo Whisper su CPU INT8.')
+                        self.logs(self.tr("gpu_fallback"))
                     else:
                         self.report_state('retry')
                     self.stop_event.wait(1.0 if requested[1]!='cpu' else 5.0)
@@ -300,8 +306,8 @@ class ASRWorker(Thread):
                 continue
             # Discard outdated subtitles (bounded latency > displaying every word).
             age=time.monotonic()-captured_at
-            if age>max_age:
-                self.logs(f'{source["name"]}: clip vecchio ({age:.1f}s), scartato.');continue
+            if max_age is not None and age>max_age:
+                continue
             try:
                 self.decoding.set()
                 try:
@@ -312,8 +318,8 @@ class ASRWorker(Thread):
                 if not raw:continue
                 # ASR itself can take many seconds on CPU. Never show old captions.
                 lag=time.monotonic()-captured_at
-                if lag>max_age:
-                    self.logs(f'{source["name"]}: frase pronta in ritardo ({lag:.1f}s), scartata.');continue
+                if max_age is not None and lag>max_age:
+                    continue
                 sid=source['id']
                 window=(source.get('_window'),language)
                 partial=source.get('_partial',False)
@@ -352,18 +358,18 @@ class ASRWorker(Thread):
 
                     try:
                         text = translator.translate(text, language, target, prepare_translation)
-                    except Exception as error:
-                        self.logs(f"Traduzione non disponibile. Mostro il testo originale. {error}")
+                    except Exception:
+                        self.logs(self.tr("translation_error"))
                     finally:
                         if preparing:
                             self.report_state("ready")
-                if not self.stop_event.is_set() and time.monotonic() - captured_at <= max_age:
+                if not self.stop_event.is_set() and (max_age is None or time.monotonic() - captured_at <= max_age):
                     self.state.publish(text)
             except Exception as ex:
-                self.logs('Errore Whisper: '+str(ex))
+                self.logs(self.tr("whisper_error", message=str(ex)))
                 if str(requested[1]).startswith(('cuda','vulkan:')):
                     cuda_failed.add(desired)
                     current=None
-                    self.logs('Errore durante inferenza GPU: passo automaticamente a CPU INT8.')
+                    self.logs(self.tr("gpu_fallback"))
 
     def stop(self):self.stop_event.set()

@@ -9,11 +9,14 @@ from queue import Queue, Empty, Full
 from collections import deque
 import os
 from pathlib import Path
+from functools import partial
 import subprocess
 import sys
 import time
 import numpy as np
 from scipy.signal import resample_poly
+from .i18n import text
+from .profile import PROFILES, recognition_profile
 
 RATE=16000
 CAPTURE_RATE=48000
@@ -22,6 +25,7 @@ CAPTURE_RATE=48000
 class LiveClipQueue(Queue):
     def put_clip(self, clip):
         source = clip[0]
+        dropped_audio = False
         with self.not_full:
             # Drop superseded previews for this source, preserving finalized audio.
             for index in range(len(self.queue)-1, -1, -1):
@@ -32,7 +36,8 @@ class LiveClipQueue(Queue):
             if len(self.queue)>=self.maxsize:
                 preview = next((i for i,item in enumerate(self.queue) if item[0].get('_partial')), None)
                 if preview is None and source.get('_partial'):
-                    return
+                    return False
+                dropped_audio = preview is None
                 del self.queue[0 if preview is None else preview]
                 self.unfinished_tasks -= 1
             if source.get('_partial'):
@@ -42,6 +47,7 @@ class LiveClipQueue(Queue):
                 self.queue.insert(index,clip)
             self.unfinished_tasks += 1
             self.not_empty.notify()
+        return dropped_audio
 
 
 def get_process_pid(executable:str)->int|None:
@@ -61,11 +67,12 @@ def get_process_pid(executable:str)->int|None:
 
 
 class SourceCapture(Thread):
-    def __init__(self,source,output_queue:Queue,stop:Event,error_callback,threshold_db=-34,low_latency=True,partial_previews=True):
+    def __init__(self,source,output_queue:Queue,stop:Event,error_callback,threshold_db=-34,profile=PROFILES[0],partial_previews=True,tr=None):
         super().__init__(daemon=True,name='capture-'+source['id'])
         self.source=source.copy();self.output_queue=output_queue;self.stop_event=stop
-        self.error_callback=error_callback;self.threshold_db=threshold_db;self.low_latency=low_latency
+        self.error_callback=error_callback;self.threshold_db=threshold_db;self.profile=profile
         self.partial_previews = partial_previews
+        self.tr = tr or partial(text, "en")
         self.audio_q=Queue(maxsize=150)
         self.level_sample=(0.0,0.0)
 
@@ -81,13 +88,13 @@ class SourceCapture(Thread):
             if self.source['kind']=='system':self._capture_system()
             else:self._capture_process()
         except Exception as ex:
-            if not self.stop_event.is_set(): self.error_callback(f'{self.source["name"]}: {ex}')
+            if not self.stop_event.is_set(): self.error_callback(self.tr("audio_error", message=str(ex)))
 
     def _capture_system(self):
         root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
         helper = root / "build" / "native" / "app_audio.exe"
         if not helper.is_file():
-            raise RuntimeError("Componente audio mancante. Esegui build_audio_helper.ps1.")
+            raise RuntimeError("app_audio.exe missing. Run build_audio_helper.ps1.")
 
         with subprocess.Popen(
             [str(helper), str(os.getpid())], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -106,7 +113,7 @@ class SourceCapture(Thread):
                 self._buffer_loop(2, capture_rate=44100, stream_active=reader.is_alive)
                 if not self.stop_event.is_set():
                     detail = process.stderr.read().decode(errors="replace").strip()
-                    raise RuntimeError(detail or "La cattura audio delle applicazioni si è interrotta.")
+                    raise RuntimeError(detail or "The audio helper stopped.")
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -128,7 +135,7 @@ class SourceCapture(Thread):
                 tap.start()
                 self._buffer_loop(channels=2,process_pid=pid)
             except Exception as ex:
-                if not self.stop_event.is_set():self.error_callback(f'{self.source["name"]}: {ex}')
+                if not self.stop_event.is_set():self.error_callback(self.tr("audio_error", message=str(ex)))
             finally:
                 if tap:
                     try:tap.close()
@@ -139,13 +146,14 @@ class SourceCapture(Thread):
         # Lower end-of-speech delay; preserve a short pre-roll so the first phoneme is not lost.
         active=[];total=0;silence=0;last_check=time.monotonic()
         preroll=deque();preroll_samples=0
-        end_silence_ms=300 if self.low_latency and self.partial_previews else 520
-        max_seconds=3.2 if self.low_latency else 3.8
-        min_clip_ms=200 if self.low_latency else 400
+        end_silence_ms=max(self.profile.end_silence_ms, 520) if not self.partial_previews else self.profile.end_silence_ms
+        max_seconds=self.profile.clip_seconds
+        min_clip_ms=200
         update_samples=int(RATE*.5)
         last_update=0
         window_id=time.monotonic()
         overlap=False
+        queue_full = False
         preroll_size=int(RATE*.14)
         while not self.stop_event.is_set():
             if process_pid and time.monotonic()-last_check>3:
@@ -182,11 +190,11 @@ class SourceCapture(Thread):
             active.append(audio.copy());total+=len(audio)
             silence=0 if voiced else silence+len(audio)
             final = silence>=RATE*end_silence_ms/1000 or total>=RATE*max_seconds
-            partial = self.low_latency and self.partial_previews and voiced and total-last_update>=update_samples
+            partial = self.profile.previews and self.partial_previews and voiced and total-last_update>=update_samples
             if total>=RATE*min_clip_ms/1000 and (final or partial):
                 clip=np.concatenate(active)
-                if final and silence>=RATE*(.1 if self.low_latency else .2):
-                    tail_seconds = .06 if self.low_latency else .1
+                if final and silence>=RATE*.1:
+                    tail_seconds = .06 if self.profile.previews else .12
                     clip=clip[:max(1,len(clip)-silence+int(RATE*tail_seconds))]
                 if len(clip)>=RATE*min_clip_ms/1000:
                     # Capture timestamp lets ASR drop stale subtitles instead of lagging.
@@ -194,7 +202,10 @@ class SourceCapture(Thread):
                     item=(source,clip,time.monotonic())
                     try:
                         if isinstance(self.output_queue,LiveClipQueue):
-                            self.output_queue.put_clip(item)
+                            dropped_audio = self.output_queue.put_clip(item)
+                            if dropped_audio and not queue_full:
+                                self.error_callback(self.tr("queue_full"))
+                            queue_full = dropped_audio
                         else:
                             self.output_queue.put_nowait(item)
                     except Full:
@@ -202,21 +213,22 @@ class SourceCapture(Thread):
                         try:
                             self.output_queue.get_nowait()
                             self.output_queue.put_nowait(item)
-                            self.error_callback('Coda ASR piena: audio più vecchio scartato.')
+                            self.error_callback(self.tr("queue_full"))
                         except (Empty,Full):pass
                 last_update=total
                 if final:
+                    overlap=voiced and total>=RATE*max_seconds
                     active=[];total=0;silence=0;last_update=0
                     window_id=time.monotonic()
-                    overlap=self.low_latency and voiced and len(clip)>=RATE*max_seconds
                     if overlap:
                         context=clip[-int(RATE*.35):].copy()
                         active=[context]
                         total=last_update=len(context)
 
 class CaptureManager:
-    def __init__(self,settings,clip_queue,error_callback):
+    def __init__(self,settings,clip_queue,error_callback,tr=None):
         self.settings=settings;self.clip_queue=clip_queue;self.error_callback=error_callback
+        self.tr = tr
         self.workers=[];self.stop_event=None
 
     def input_level(self):
@@ -227,11 +239,13 @@ class CaptureManager:
     def start(self):
         self.stop()
         self.stop_event=Event()
+        profile = recognition_profile(self.settings)
+        threshold = self.settings.get("silence_db", -34 if profile.previews else -42)
         partial_previews = self.settings.get("asr_model") != "large-v3"
         for src in self.settings.get('sources',[]):
             if src.get('enabled'):
-                w=SourceCapture(src,self.clip_queue,self.stop_event,self.error_callback,self.settings.get('silence_db',-34),
-                                self.settings.get('low_latency',True),partial_previews)
+                w=SourceCapture(src,self.clip_queue,self.stop_event,self.error_callback,threshold,
+                                profile,partial_previews,self.tr)
                 self.workers.append(w);w.start()
     def stop(self):
         if self.stop_event:self.stop_event.set()
