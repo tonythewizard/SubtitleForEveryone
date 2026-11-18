@@ -19,6 +19,18 @@ from .models import ggml_model
 
 
 def vulkan_gpus():
+    bundled = BUNDLED_MODELS.parent / "whisper-vulkan" / "vulkan_devices.exe"
+    probe = BUNDLED_MODELS.parent / "build" / "native" / "vulkan_devices.exe"
+    for candidate in (bundled, probe):
+        if candidate.is_file():
+            try:
+                result = subprocess.run([str(candidate)], capture_output=True, text=True, encoding="utf-8",
+                                        errors="replace", timeout=3, check=True,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                return [(int(index), name) for line in result.stdout.splitlines()
+                        if "\t" in line for index, name in [line.split("\t", 1)] if index.isdecimal()]
+            except (OSError, subprocess.SubprocessError):
+                continue
     executable = shutil.which('vulkaninfo')
     if not executable:
         return []

@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
 
 from .audio import CaptureManager, LiveClipQueue
 from .engine import ASRWorker, nvidia_gpus
-from .settings import Settings
+from .settings import ROOT, Settings
+from .downloads import download_verified
 from .i18n import LANGUAGES, resolve_language, text
 from .profile import DEFAULT_PROFILE, PROFILES, recognition_profile
 from . import startup, updates
@@ -84,7 +85,8 @@ class Caption:
 class Events(QObject):
     status = Signal(object, str)
     detail = Signal(object, str)
-    update = Signal(str, str)
+    update = Signal(str, object)
+    installer = Signal(object)
 
 
 class AudioMeter(QWidget):
@@ -210,10 +212,12 @@ class ControlWindow(QWidget):
         self.events.status.connect(self.on_status)
         self.events.detail.connect(self.on_detail)
         self.events.update.connect(self.on_update_result)
+        self.events.installer.connect(self.on_installer_ready)
         self.update_in_progress = False
         self.update_message = ""
         self.preferences = None
         self.relaunch = None
+        self.install_update = None
         self.worker = None
         self.previous_worker = None
         self.exiting = False
@@ -477,19 +481,48 @@ class ControlWindow(QWidget):
                 with httpx.Client(timeout=6) as client:
                     result = updates.latest_update(client)
             except (httpx.HTTPError, ValueError, OSError):
-                result = "failed", ""
+                result = "failed", None
             self.events.update.emit(*result)
 
         Thread(target=fetch, daemon=True).start()
 
-    def on_update_result(self, result, tag):
+    def on_update_result(self, result, release):
         self.update_in_progress = False
         self.set_update_status("update_" + result)
         if result == "available":
+            installable = bool(getattr(sys, "frozen", False) and release.url)
             answer = QMessageBox.question(self.preferences if self.preferences and self.preferences.isVisible() else self,
-                                          self.t("update_check"), self.t("update_found", version=tag))
+                                          self.t("update_check"),
+                                          self.t("update_install" if installable else "update_found", version=release.tag))
             if answer == QMessageBox.StandardButton.Yes:
-                QDesktopServices.openUrl(QUrl(f"{updates.RELEASES}/tag/{tag}"))
+                if installable:
+                    self.download_update(release)
+                else:
+                    QDesktopServices.openUrl(QUrl(release.page))
+
+    def download_update(self, release):
+        self.update_in_progress = True
+        self.set_update_status("update_download")
+
+        def fetch():
+            try:
+                with httpx.Client(timeout=30) as client:
+                    path = download_verified(client, release.url, ROOT / "updates" / release.name,
+                                             release.size, release.digest)
+            except (httpx.HTTPError, ValueError, OSError):
+                path = None
+            self.events.installer.emit(path)
+
+        Thread(target=fetch, daemon=True).start()
+
+    def on_installer_ready(self, path):
+        self.update_in_progress = False
+        if path is None:
+            self.set_update_status("update_failed")
+            QMessageBox.warning(self, self.t("update_check"), self.t("update_failed"))
+            return
+        self.install_update = str(path)
+        self.quit_from_tray()
 
     def setup_tray(self):
         self.tray = None
@@ -681,6 +714,9 @@ class ControlWindow(QWidget):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--self-test":
+        from .self_test import run
+        return run(Path(sys.argv[2]))
     if sys.platform == "win32":
         from ctypes import windll
         windll.shell32.SetCurrentProcessExplicitAppUserModelID("SubtitleForEveryone.Desktop")
@@ -696,7 +732,9 @@ def main():
     if "--resume-transcription" in sys.argv:
         QTimer.singleShot(0, window.toggle)
     status = app.exec()
-    if window.relaunch is not None:
+    if window.install_update:
+        QProcess.startDetached(window.install_update, [], str(ROOT / "updates"))
+    elif window.relaunch is not None:
         args = window.relaunch
         if not getattr(sys, "frozen", False):
             args = [str(Path(__file__).resolve().parents[1] / "launch.py"), *args]

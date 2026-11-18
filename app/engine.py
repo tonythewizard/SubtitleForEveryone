@@ -20,29 +20,37 @@ from .hallucinations import clean_asr_text, accept_segment
 from .i18n import text
 from .profile import recognition_profile
 from .models import ct2_model
+from .cuda_runtime import ensure as ensure_cuda_runtime
 from .translation import Translator
 from .vulkan import VulkanWhisper
 
 _cuda_dll_handles = []
 
 
-def _load_cuda_dll_paths():
+def _load_cuda_dll_paths(runtime=()):
     if os.name != 'nt' or _cuda_dll_handles:
         return
     entries = {Path(entry).resolve() for entry in [sysconfig.get_path('purelib'), *sys.path]}
+    directories = list(runtime)
     for entry in sorted(entries):
         for package in ('cublas', 'cudnn', 'cuda_nvrtc'):
             directory = entry / 'nvidia' / package / 'bin'
             if directory.is_dir():
-                _cuda_dll_handles.append(os.add_dll_directory(str(directory)))
-                os.environ['PATH'] = str(directory) + os.pathsep + os.environ.get('PATH', '')
+                directories.append(directory)
+    for directory in directories:
+        _cuda_dll_handles.append(os.add_dll_directory(str(directory)))
+        os.environ['PATH'] = str(directory) + os.pathsep + os.environ.get('PATH', '')
 
 
 def nvidia_gpus():
     """Return visible NVIDIA GPUs as (index, name, memory_mb)."""
     exe = shutil.which('nvidia-smi')
     if not exe:
-        return []
+        try:
+            from ctranslate2 import get_cuda_device_count
+            return [(index, f"NVIDIA GPU {index}", 0) for index in range(get_cuda_device_count())]
+        except (RuntimeError, OSError, ImportError):
+            return []
     try:
         raw = subprocess.check_output(
             [exe, '--query-gpu=index,name,memory.total', '--format=csv,noheader,nounits'],
@@ -122,7 +130,9 @@ class ASRWorker(Thread):
             except (ValueError, IndexError):
                 gpu_index = 0
             try:
-                _load_cuda_dll_paths()
+                runtime = (ensure_cuda_runtime(self.stop_event, self.report_state)
+                           if getattr(sys, "frozen", False) and not _cuda_dll_handles else ())
+                _load_cuda_dll_paths(runtime)
                 model=WhisperModel(source, device='cuda', device_index=gpu_index,
                                    compute_type='int8_float16' if size == 'large-v3' else 'float16', **kwargs)
                 import numpy as np

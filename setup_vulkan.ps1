@@ -4,7 +4,8 @@ param(
     [ValidateSet('tiny','base','small','medium','large-v3')]
     [string]$Model = 'tiny',
     [int]$GpuIndex = -1,
-    [switch]$Check
+    [switch]$Check,
+    [switch]$BuildOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -60,13 +61,15 @@ if (-not (Test-Path -LiteralPath $server)) {
     Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
     $env:Path = (Split-Path -Parent $ninja) + ';' + $env:Path
     Invoke-Checked $cmakePath @('-S',$source,'-B',$build,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',
-        '-DGGML_VULKAN=ON','-DWHISPER_BUILD_SERVER=ON','-DWHISPER_BUILD_TESTS=OFF','-DBUILD_SHARED_LIBS=OFF')
+        '-DGGML_VULKAN=ON','-DGGML_NATIVE=OFF','-DWHISPER_BUILD_SERVER=ON',
+        '-DWHISPER_BUILD_TESTS=OFF','-DBUILD_SHARED_LIBS=OFF')
     Invoke-Checked $cmakePath @('--build',$build,'--target','whisper-server','--parallel','4')
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $build 'bin\whisper-server.exe') -Destination $server
 }
 
 if ($Check) { Write-Host "Server trovato: $server"; return }
+if ($BuildOnly) { return }
 $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) { throw 'Esegui prima setup_windows.ps1.' }
 Invoke-Checked $python @('-m','app.vulkan',$Model,"$GpuIndex")
