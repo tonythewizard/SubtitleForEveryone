@@ -10,7 +10,7 @@ Installa Python 3.12 x64 con il launcher `py` e Visual Studio Build Tools con C+
 
 1. **Tutto l’audio delle app** cattura il parlato riprodotto dalle applicazioni Windows anche se usano uscite diverse. Per ascoltare una singola app, seleziona il processo o digita il nome, ad esempio `chrome.exe`.
 2. Premi **Avvia**. Whisper rileva automaticamente la lingua parlata. In **Lingua dei sottotitoli** puoi mantenere l’originale o tradurre in italiano, inglese, spagnolo, francese o tedesco. La prima volta servono Internet e i modelli della coppia linguistica. Riconoscimento e traduzione avvengono in locale.
-3. Trascina l’area del testo per spostare la finestra e usa l’angolo inferiore destro per ridimensionarla. Puoi regolare opacità, dimensione del testo, priorità in primo piano e riattivare la barra del titolo dal pannello principale.
+3. Trascina l’area del testo per spostare la finestra e usa l’angolo inferiore destro per ridimensionarla. Dal pannello principale puoi scegliere il font, il colore e la dimensione del testo, regolare l’opacità, impostare la priorità in primo piano e riattivare la barra del titolo.
 4. Il **Monitor sottotitoli** mostra l’ultima frase in tempo reale. **Prova sottotitoli** visualizza un esempio anche con la trascrizione in pausa. Per i video a schermo intero, usa la modalità finestra senza bordi se il player in modalità esclusiva copre i sottotitoli.
 5. La **X** del pannello principale lo nasconde nell’area di notifica. Dall’icona puoi riaprire il pannello, avviare o mettere in pausa la trascrizione, mostrare o nascondere i sottotitoli e uscire.
 

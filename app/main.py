@@ -4,9 +4,9 @@ from time import monotonic
 
 import psutil
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QLinearGradient, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFormLayout, QGraphicsDropShadowEffect,
+    QApplication, QCheckBox, QColorDialog, QComboBox, QFontComboBox, QFormLayout, QGraphicsDropShadowEffect,
     QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizeGrip, QSlider, QSpinBox,
     QSystemTrayIcon, QVBoxLayout, QWidget,
 )
@@ -149,10 +149,11 @@ class CaptionWindow(QWidget):
         grip.setStyleSheet("background: #192431;")
         layout.addWidget(grip, 0, Qt.AlignmentFlag.AlignRight)
 
-    def apply_style(self, size, opacity):
+    def apply_style(self, font, color, opacity):
+        self.caption.setFont(font)
         self.shadow.setEnabled(opacity < 35)
         self.caption.setStyleSheet(
-            f"color: white; font-size: {size}px; font-weight: 700;"
+            f"color: {color.name()};"
             f"background: rgba(10, 16, 25, {round(opacity * 255 / 100)});"
             "border-radius: 10px; padding: 8px;"
         )
@@ -183,8 +184,11 @@ class ControlWindow(QWidget):
         self.floating = CaptionWindow(self.settings)
         self.setWindowTitle("SubtitleForEveryone")
         self.setMinimumWidth(600)
+        control_font = self.font()
+        control_font.setPixelSize(14)
+        self.setFont(control_font)
         self.setStyleSheet("""
-            QWidget { background: #0c1520; color: #edf6ff; font-size: 14px; }
+            QWidget { background: #0c1520; color: #edf6ff; }
             QLabel { background: transparent; }
             QFrame#monitor { background: #132438; border: 1px solid #2d4860; border-radius: 15px; }
             QLabel#monitorTitle { color: #8dc9d4; font-weight: 700; }
@@ -231,7 +235,6 @@ class ControlWindow(QWidget):
         self.monitor_text.setTextFormat(Qt.TextFormat.PlainText)
         self.monitor_text.setWordWrap(True)
         self.monitor_text.setMinimumHeight(56)
-        self.monitor_text.setStyleSheet("font-size: 20px; font-weight: 650;")
         monitor_layout.addWidget(self.monitor_text)
         layout.addWidget(monitor)
 
@@ -272,12 +275,28 @@ class ControlWindow(QWidget):
         self.backend.setCurrentIndex(max(0, self.backend.findData(self.settings.get("asr_device"))))
         form.addRow("&Elaborazione", self.backend)
 
-        self.font = QSpinBox()
-        self.font.setRange(16, 72)
-        self.font.setSuffix(" px")
-        self.font.setValue(self.settings.get("font_size", 31))
-        self.font.valueChanged.connect(self.apply_style)
-        form.addRow("&Dimensione testo", self.font)
+        self.font_picker = QFontComboBox()
+        self.font_picker.setCurrentFont(QFont(self.settings.get("caption_font", QApplication.font().family())))
+        self.font_picker.currentFontChanged.connect(self.change_font)
+        self.text_color = QColor(self.settings.get("caption_color", "#ffffff"))
+        if not self.text_color.isValid():
+            self.text_color = QColor("#ffffff")
+        self.color_button = QPushButton()
+        self.color_button.setAccessibleName("Colore del testo dei sottotitoli")
+        self.color_button.clicked.connect(self.choose_text_color)
+        text_style = QHBoxLayout()
+        text_style.addWidget(self.font_picker, 1)
+        text_style.addWidget(self.color_button)
+        font_label = QLabel("&Font e colore")
+        font_label.setBuddy(self.font_picker)
+        form.addRow(font_label, text_style)
+
+        self.font_size = QSpinBox()
+        self.font_size.setRange(16, 72)
+        self.font_size.setSuffix(" px")
+        self.font_size.setValue(self.settings.get("font_size", 31))
+        self.font_size.valueChanged.connect(self.apply_style)
+        form.addRow("&Dimensione testo", self.font_size)
         self.opacity = QSlider(Qt.Orientation.Horizontal)
         self.opacity.setRange(0, 100)
         self.opacity.setValue(self.settings.get("opacity", 65))
@@ -377,9 +396,31 @@ class ControlWindow(QWidget):
                 self.source.setEditText(previous)
 
     def apply_style(self):
-        size, opacity = self.font.value(), self.opacity.value()
+        size, opacity = self.font_size.value(), self.opacity.value()
+        font = self.font_picker.currentFont()
+        font.setPixelSize(size)
+        font.setWeight(QFont.Weight.Bold)
+        color = self.text_color.name()
+        swatch = QPixmap(16, 16)
+        swatch.fill(self.text_color)
+        self.color_button.setIcon(QIcon(swatch))
+        self.color_button.setText(color.upper())
         self.opacity_value.setText(f"{opacity}%")
-        self.floating.apply_style(size, opacity)
+        self.floating.apply_style(font, self.text_color, opacity)
+        font.setPixelSize(20)
+        self.monitor_text.setFont(font)
+        self.monitor_text.setStyleSheet(f"color: {color};")
+
+    def change_font(self, font):
+        self.settings.set("caption_font", font.family())
+        self.apply_style()
+
+    def choose_text_color(self):
+        color = QColorDialog.getColor(self.text_color, self, "Colore del testo dei sottotitoli")
+        if color.isValid():
+            self.text_color = color
+            self.settings.set("caption_color", color.name())
+            self.apply_style()
 
     def set_pinned(self, pinned):
         self.floating.set_pinned(pinned)
@@ -479,7 +520,7 @@ class ControlWindow(QWidget):
         frame = self.floating.geometry()
         for key, value in {
             "caption_geometry": [frame.x(), frame.y(), frame.width(), frame.height()],
-            "font_size": self.font.value(),
+            "font_size": self.font_size.value(),
             "opacity": self.opacity.value(),
             "pinned": self.pin.isChecked(),
             "show_caption_title": self.title_visible.isChecked(),
