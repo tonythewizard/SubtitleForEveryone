@@ -38,11 +38,13 @@ if (-not (Test-Path -LiteralPath $server)) {
     $env:VULKAN_SDK = $sdk
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path $vswhere)) { throw 'Visual Studio Build Tools non trovato.' }
-    $vs = & $vswhere -latest -products '*' -version '[17,18)' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    if (-not $vs) { throw 'Visual Studio 2022 con strumenti C++ x64 non trovato.' }
+    $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if (-not $vs) { throw 'Visual Studio Build Tools con strumenti C++ x64 non trovato.' }
     $tools = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\CMake'
-    $cmakePath = Join-Path $tools 'CMake\bin\cmake.exe'
-    $ninja = Join-Path $tools 'Ninja\ninja.exe'
+    $cmake = Get-Command cmake.exe -ErrorAction SilentlyContinue
+    $ninjaTool = Get-Command ninja.exe -ErrorAction SilentlyContinue
+    $cmakePath = if ($cmake) { $cmake.Source } else { Join-Path $tools 'CMake\bin\cmake.exe' }
+    $ninja = if ($ninjaTool) { $ninjaTool.Source } else { Join-Path $tools 'Ninja\ninja.exe' }
     if (-not (Test-Path $cmakePath) -or -not (Test-Path $ninja)) { throw 'Installa il componente CMake per C++ di Visual Studio.' }
     if ($Check) { Write-Host 'Prerequisiti di compilazione trovati.'; return }
     $source = Join-Path $PSScriptRoot 'whisper-vulkan-build\source'
