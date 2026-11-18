@@ -20,9 +20,11 @@ In **Impostazioni** puoi seguire la lingua di Windows oppure scegliere italiano,
 ## Accelerazione GPU
 
 - **CUDA** richiede una GPU NVIDIA con driver aggiornati. Dopo l’installazione esegui `.\setup_cuda.ps1` e scegli la tua GPU CUDA in **Elaborazione**.
-- **Vulkan** richiede un driver Vulkan, `vulkaninfo` e un server whisper.cpp compilato con Vulkan. Esegui `.\setup_vulkan.ps1 -Model tiny -GpuIndex 1`, sostituendo modello e indice con quelli scelti in **Elaborazione**. Per compilare il server lo script usa Visual Studio 2022 Build Tools con C++, CMake, Ninja e Vulkan SDK. Se disponi già di un server compilato, metti `whisper-server.exe` nella cartella `whisper-vulkan` prima di eseguire lo script.
+- **Vulkan** richiede un driver Vulkan, `vulkaninfo` e un server whisper.cpp compilato con Vulkan. Esegui `.\setup_vulkan.ps1 -Model tiny -GpuIndex 1` per preparare e collaudare il server, sostituendo modello e indice con quelli scelti in **Elaborazione**. Per compilare il server lo script usa Visual Studio 2022 Build Tools con C++, CMake, Ninja e Vulkan SDK. Se disponi già di un server compilato, metti `whisper-server.exe` nella cartella `whisper-vulkan`.
 - Lo stato mostra il backend in uso. In caso di errore GPU, l’app riprova con CPU INT8.
 
 Il modello `tiny` è il più rapido. `base`, `small`, `medium` e `large-v3` richiedono progressivamente più risorse. Per provare `large-v3` con Vulkan usa `.\setup_vulkan.ps1 -Model large-v3 -GpuIndex 1` con l’indice della tua GPU. La qualità dipende da lingua, rumore e chiarezza delle voci. La cattura di un browser può includere l’audio delle altre schede dello stesso processo.
+
+Quando avvii la trascrizione, l’app verifica i file del modello Whisper scelto confrontandoli con i checksum delle revisioni ufficiali. I modelli integri si avviano anche offline. I file mancanti o danneggiati vengono scaricati automaticamente. I nuovi file sono conservati in `%LOCALAPPDATA%\SubtitleForEveryone\models`, nelle sottocartelle `whisper` per CPU/CUDA e `vulkan` per Vulkan. L’app riusa anche i modelli ufficiali già presenti accanto a `whisper-server.exe`.
 
 Questo progetto deriva da [SubtitleForStream](https://github.com/tonythewizard/SubtitleForStream) ed è distribuito con licenza [GPL-3.0-only](LICENSE).

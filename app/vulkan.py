@@ -15,6 +15,7 @@ import httpx
 import numpy as np
 
 from .settings import BUNDLED_MODELS
+from .models import ggml_model
 
 
 def vulkan_gpus():
@@ -34,16 +35,15 @@ def vulkan_gpus():
 
 
 class VulkanWhisper:
-    def __init__(self, size, index, stop_event, beam_size=1):
+    def __init__(self, size, index, stop_event, beam_size=1, on_state=None):
         directory = Path(os.environ.get('SUBTITLEFOREVERYONE_VULKAN_DIR') or
                          BUNDLED_MODELS.parent / 'whisper-vulkan').resolve()
         executable = directory / 'whisper-server.exe'
-        model = next((p for p in (directory / f'ggml-{size}-q5_0.bin',
-                                  directory / f'ggml-{size}.bin') if p.is_file()), None)
-        if not executable.is_file() or model is None:
-            raise RuntimeError(
-                f'In {directory} servono whisper-server.exe con Vulkan e ggml-{size}-q5_0.bin '
-                f'(oppure ggml-{size}.bin). Vedi README.')
+        if not executable.is_file():
+            raise RuntimeError(f'Vulkan whisper-server.exe missing in {directory}. Run setup_vulkan.ps1.')
+        report = on_state or (lambda stage: None)
+        model = ggml_model(size, directory, stop_event, report)
+        report("loading")
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]

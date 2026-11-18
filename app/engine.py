@@ -7,7 +7,6 @@ rather than being shown many seconds after the speaker stopped talking.
 from __future__ import annotations
 from threading import Thread, Event
 from queue import Queue, Empty
-import json
 import os
 import re
 import shutil
@@ -20,7 +19,7 @@ import sysconfig
 from .hallucinations import clean_asr_text, accept_segment
 from .i18n import text
 from .profile import recognition_profile
-from .settings import ROOT, BUNDLED_MODELS
+from .models import ct2_model
 from .translation import Translator
 from .vulkan import VulkanWhisper
 
@@ -87,7 +86,6 @@ class ASRWorker(Thread):
         self.decoding=Event()
         self.vulkan=None
         self.on_state=on_state
-        self.repaired_files=set()
         self.active_device=None
         self.active_model=None
         self.selected_device=None
@@ -95,67 +93,6 @@ class ASRWorker(Thread):
     def report_state(self, stage):
         if self.on_state and not self.stop_event.is_set():
             self.on_state(self,stage)
-
-    @staticmethod
-    def _model_issues(path):
-        missing=[]
-        damaged=[]
-        for name in ('model.bin','config.json','tokenizer.json'):
-            file=path/name
-            try:
-                if file.stat().st_size==0:
-                    damaged.append(name)
-                elif name.endswith('.json'):
-                    try:
-                        content=json.loads(file.read_text(encoding='utf-8'))
-                        if not isinstance(content,dict):
-                            damaged.append(name)
-                    except (ValueError,UnicodeError):
-                        damaged.append(name)
-            except FileNotFoundError:
-                missing.append(name)
-        return missing,damaged
-
-    def _repair_model(self,size,path,files):
-        from huggingface_hub import snapshot_download
-
-        if self.stop_event.is_set():
-            raise RuntimeError('Riparazione del modello annullata.')
-        if any((size,name) in self.repaired_files for name in files):
-            raise RuntimeError(f'Il modello Whisper {size} è ancora illeggibile dopo il ripristino.')
-        revision=path.name if re.fullmatch(r'[0-9a-f]{40}',path.name) else None
-        self.report_state('repairing')
-        result=Path(snapshot_download(
-            repo_id=f'Systran/faster-whisper-{size}',revision=revision,
-            cache_dir=str(ROOT/'models'/'whisper'),allow_patterns=files,force_download=True))
-        self.repaired_files.update((size,name) for name in files)
-        return result
-
-    def _whisper_model_path(self,size,skip_bundled=False):
-        from faster_whisper.utils import download_model
-        from huggingface_hub.errors import LocalEntryNotFoundError
-
-        bundled=BUNDLED_MODELS/'whisper'/size
-        if not skip_bundled and self._model_issues(bundled)==([],[]):
-            return str(bundled)
-        cache=str(ROOT/'models'/'whisper')
-        try:
-            local=Path(download_model(size,cache_dir=cache,local_files_only=True))
-        except LocalEntryNotFoundError:
-            local=None
-        if local is not None:
-            missing,damaged=self._model_issues(local)
-            if not missing and not damaged:
-                return str(local)
-            if damaged:
-                local=self._repair_model(size,local,missing+damaged)
-        if local is None or self._model_issues(local)[0]:
-            self.report_state('downloading')
-            local=Path(download_model(size,cache_dir=cache))
-        if self._model_issues(local)!=([],[]):
-            raise RuntimeError(f'Il modello Whisper {size} risulta incompleto.')
-        self.report_state('loading')
-        return str(local)
 
     @staticmethod
     def _binary_corrupt(error):
@@ -167,29 +104,14 @@ class ASRWorker(Thread):
         if requested_device.startswith('vulkan:'):
             import numpy as np
             self.vulkan=VulkanWhisper(size,int(requested_device.split(':')[1]),self.stop_event,
-                                       beam_size=recognition_profile(self.settings).beam_size)
+                                       beam_size=recognition_profile(self.settings).beam_size,
+                                       on_state=self.report_state)
             self.vulkan.decode(np.zeros(16000,dtype=np.float32),'en')
             self.active_device=requested_device
             return self.vulkan
-        source=self._whisper_model_path(size)
-        try:
-            return self._load_whisper_model(size,requested_device,source)
-        except (RuntimeError,ValueError) as error:
-            if not self._binary_corrupt(error):
-                raise
-            bundled=BUNDLED_MODELS/'whisper'/size
-            if Path(source)==bundled:
-                source=self._whisper_model_path(size,skip_bundled=True)
-                try:
-                    return self._load_whisper_model(size,requested_device,source)
-                except (RuntimeError,ValueError) as cached_error:
-                    if not self._binary_corrupt(cached_error):
-                        raise
-            repaired=self._repair_model(size,Path(source),['model.bin'])
-            if self._model_issues(repaired)!=([],[]):
-                raise RuntimeError(f'Il ripristino di Whisper {size} è incompleto.')
-            self.report_state('loading')
-            return self._load_whisper_model(size,requested_device,str(repaired))
+        source = ct2_model(size, self.stop_event, self.report_state)
+        self.report_state("loading")
+        return self._load_whisper_model(size, requested_device, str(source))
 
     def _load_whisper_model(self,size,requested_device,source):
         from faster_whisper import WhisperModel

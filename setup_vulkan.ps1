@@ -67,12 +67,6 @@ if (-not (Test-Path -LiteralPath $server)) {
 }
 
 if ($Check) { Write-Host "Server trovato: $server"; return }
-$modelName = if ($Model -eq 'large-v3') { 'ggml-large-v3-q5_0.bin' } else { "ggml-$Model.bin" }
 $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) { throw 'Esegui prima setup_windows.ps1.' }
-if (-not (Test-Path (Join-Path $destination $modelName)) -and
-    -not (Test-Path (Join-Path $destination "ggml-$Model-q5_0.bin"))) {
-    $hf = Join-Path $PSScriptRoot '.venv\Scripts\hf.exe'
-    Invoke-Checked $hf @('download','ggerganov/whisper.cpp',$modelName,'--local-dir',$destination)
-}
 Invoke-Checked $python @('-m','app.vulkan',$Model,"$GpuIndex")
