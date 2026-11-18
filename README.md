@@ -1,4 +1,4 @@
-# SubtitileForEveryone
+# SubtitleForEveryone
 
 Sottotitoli in tempo reale per persone sorde o ipoacusiche su Windows 11 x64. Puoi leggere una conversazione catturata dal microfono o l’audio di un’applicazione, per esempio un video riprodotto nel browser.
 

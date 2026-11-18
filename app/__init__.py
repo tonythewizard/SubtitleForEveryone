@@ -1,1 +1,1 @@
-"""SubtitileForEveryone: local live captions for Windows."""
+"""SubtitleForEveryone: local live captions for Windows."""

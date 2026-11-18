@@ -35,7 +35,7 @@ def vulkan_gpus():
 
 class VulkanWhisper:
     def __init__(self, size, index, stop_event):
-        directory = Path(os.environ.get('SUBTITILEFOREVERYONE_VULKAN_DIR') or
+        directory = Path(os.environ.get('SUBTITLEFOREVERYONE_VULKAN_DIR') or
                          BUNDLED_MODELS.parent / 'whisper-vulkan').resolve()
         executable = directory / 'whisper-server.exe'
         model = next((p for p in (directory / f'ggml-{size}-q5_0.bin',

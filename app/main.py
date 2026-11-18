@@ -122,7 +122,7 @@ class ControlWindow(QWidget):
         self.caption = Caption()
         self.preview_until = 0
         self.floating = CaptionWindow(self.settings)
-        self.setWindowTitle("SubtitileForEveryone")
+        self.setWindowTitle("SubtitleForEveryone")
         self.setMinimumWidth(485)
         self.setStyleSheet("""
             QWidget { background: #111923; color: #edf4fb; font-size: 14px; }
@@ -137,7 +137,7 @@ class ControlWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(14)
-        title = QLabel("SubtitileForEveryone")
+        title = QLabel("SubtitleForEveryone")
         title.setStyleSheet("font-size: 25px; font-weight: 700;")
         layout.addWidget(title)
 
@@ -328,9 +328,9 @@ class ControlWindow(QWidget):
 def main():
     if sys.platform == "win32":
         from ctypes import windll
-        windll.shell32.SetCurrentProcessExplicitAppUserModelID("SubtitileForEveryone.Desktop")
+        windll.shell32.SetCurrentProcessExplicitAppUserModelID("SubtitleForEveryone.Desktop")
     app = QApplication(sys.argv)
-    app.setApplicationName("SubtitileForEveryone")
+    app.setApplicationName("SubtitleForEveryone")
     window = ControlWindow()
     window.show()
     return app.exec()

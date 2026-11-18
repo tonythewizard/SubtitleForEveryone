@@ -4,7 +4,7 @@ from pathlib import Path
 from threading import RLock
 import sys
 
-ROOT = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SubtitileForEveryone"
+ROOT = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SubtitleForEveryone"
 BUNDLED_MODELS = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "bundled_models"
 
 
