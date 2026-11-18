@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('tiny','base','small','medium')]
+    [ValidateSet('tiny','base','small','medium','large-v3')]
     [string]$Model = 'tiny',
     [int]$GpuIndex = -1,
     [switch]$Check
@@ -67,7 +67,7 @@ if (-not (Test-Path -LiteralPath $server)) {
 }
 
 if ($Check) { Write-Host "Server trovato: $server"; return }
-$modelName = "ggml-$Model.bin"
+$modelName = if ($Model -eq 'large-v3') { 'ggml-large-v3-q5_0.bin' } else { "ggml-$Model.bin" }
 $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) { throw 'Esegui prima setup_windows.ps1.' }
 if (-not (Test-Path (Join-Path $destination $modelName)) -and

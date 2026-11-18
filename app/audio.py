@@ -7,6 +7,10 @@ from __future__ import annotations
 from threading import Thread, Event
 from queue import Queue, Empty, Full
 from collections import deque
+import os
+from pathlib import Path
+import subprocess
+import sys
 import time
 import numpy as np
 from scipy.signal import resample_poly
@@ -57,10 +61,11 @@ def get_process_pid(executable:str)->int|None:
 
 
 class SourceCapture(Thread):
-    def __init__(self,source,output_queue:Queue,stop:Event,error_callback,threshold_db=-34,low_latency=True):
+    def __init__(self,source,output_queue:Queue,stop:Event,error_callback,threshold_db=-34,low_latency=True,partial_previews=True):
         super().__init__(daemon=True,name='capture-'+source['id'])
         self.source=source.copy();self.output_queue=output_queue;self.stop_event=stop
         self.error_callback=error_callback;self.threshold_db=threshold_db;self.low_latency=low_latency
+        self.partial_previews = partial_previews
         self.audio_q=Queue(maxsize=150)
         self.level_sample=(0.0,0.0)
 
@@ -79,31 +84,33 @@ class SourceCapture(Thread):
             if not self.stop_event.is_set(): self.error_callback(f'{self.source["name"]}: {ex}')
 
     def _capture_system(self):
-        import pyaudiowpatch as pa
+        root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+        helper = root / "build" / "native" / "app_audio.exe"
+        if not helper.is_file():
+            raise RuntimeError("Componente audio mancante. Esegui build_audio_helper.ps1.")
 
-        previous_error = None
-        while not self.stop_event.is_set():
+        with subprocess.Popen(
+            [str(helper), str(os.getpid())], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ) as process:
+            def read_pcm():
+                while not self.stop_event.is_set():
+                    block = process.stdout.read(882 * 2 * 4)
+                    if not block:
+                        break
+                    self._emit(block)
+
+            reader = Thread(target=read_pcm, daemon=True, name="wasapi-pcm")
+            reader.start()
             try:
-                with pa.PyAudio() as audio:
-                    output = audio.get_default_wasapi_loopback()
-                    channels = output["maxInputChannels"]
-                    rate = int(output["defaultSampleRate"])
-
-                    def callback(data, frames, timing, status):
-                        self._emit(data)
-                        return None, pa.paContinue
-
-                    with audio.open(format=pa.paFloat32, channels=channels, rate=rate,
-                                    input=True, input_device_index=output["index"],
-                                    frames_per_buffer=rate // 50, stream_callback=callback) as stream:
-                        previous_error = None
-                        self._buffer_loop(channels, capture_rate=rate, stream_active=stream.is_active)
-            except (OSError, LookupError) as error:
-                message = f"Uscita audio Windows non disponibile: {error}"
-                if message != previous_error and not self.stop_event.is_set():
-                    self.error_callback(message)
-                previous_error = message
-            self.stop_event.wait(1)
+                self._buffer_loop(2, capture_rate=44100, stream_active=reader.is_alive)
+                if not self.stop_event.is_set():
+                    detail = process.stderr.read().decode(errors="replace").strip()
+                    raise RuntimeError(detail or "La cattura audio delle applicazioni si è interrotta.")
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                reader.join(timeout=1)
 
     def _capture_process(self):
         # proc-tap 1.1 exposes ProcessAudioCapture (the old ProcTap API was
@@ -132,7 +139,7 @@ class SourceCapture(Thread):
         # Lower end-of-speech delay; preserve a short pre-roll so the first phoneme is not lost.
         active=[];total=0;silence=0;last_check=time.monotonic()
         preroll=deque();preroll_samples=0
-        end_silence_ms=300 if self.low_latency else 520
+        end_silence_ms=300 if self.low_latency and self.partial_previews else 520
         max_seconds=3.2 if self.low_latency else 3.8
         min_clip_ms=200 if self.low_latency else 400
         update_samples=int(RATE*.5)
@@ -175,7 +182,7 @@ class SourceCapture(Thread):
             active.append(audio.copy());total+=len(audio)
             silence=0 if voiced else silence+len(audio)
             final = silence>=RATE*end_silence_ms/1000 or total>=RATE*max_seconds
-            partial = self.low_latency and voiced and total-last_update>=update_samples
+            partial = self.low_latency and self.partial_previews and voiced and total-last_update>=update_samples
             if total>=RATE*min_clip_ms/1000 and (final or partial):
                 clip=np.concatenate(active)
                 if final and silence>=RATE*(.1 if self.low_latency else .2):
@@ -220,9 +227,11 @@ class CaptureManager:
     def start(self):
         self.stop()
         self.stop_event=Event()
+        partial_previews = self.settings.get("asr_model") != "large-v3"
         for src in self.settings.get('sources',[]):
             if src.get('enabled'):
-                w=SourceCapture(src,self.clip_queue,self.stop_event,self.error_callback,self.settings.get('silence_db',-34),self.settings.get('low_latency',True))
+                w=SourceCapture(src,self.clip_queue,self.stop_event,self.error_callback,self.settings.get('silence_db',-34),
+                                self.settings.get('low_latency',True),partial_previews)
                 self.workers.append(w);w.start()
     def stop(self):
         if self.stop_event:self.stop_event.set()

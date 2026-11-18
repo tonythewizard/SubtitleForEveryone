@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from .audio import CaptureManager, LiveClipQueue
 from .engine import ASRWorker, nvidia_gpus
 from .settings import Settings
+from .translation import OUTPUT_LANGUAGES
 from .vulkan import vulkan_gpus
 
 
@@ -249,10 +250,19 @@ class ControlWindow(QWidget):
         audio_label.setBuddy(self.source)
         form.addRow(audio_label, sources)
         self.model = QComboBox()
-        for name in ("tiny", "base", "small", "medium"):
+        for name in ("tiny", "base", "small", "medium", "large-v3"):
             self.model.addItem(name)
         self.model.setCurrentText(self.settings.get("asr_model", "tiny"))
         form.addRow("&Modello Whisper", self.model)
+        self.subtitle_language = QComboBox()
+        self.subtitle_language.addItem("Lingua del parlato (automatica)", "auto")
+        for code, label in OUTPUT_LANGUAGES.items():
+            self.subtitle_language.addItem(label, code)
+        self.subtitle_language.setCurrentIndex(max(0, self.subtitle_language.findData(
+            self.settings.get("subtitle_language", "auto"))))
+        self.subtitle_language.currentIndexChanged.connect(
+            lambda _: self.settings.set("subtitle_language", self.subtitle_language.currentData()))
+        form.addRow("&Lingua dei sottotitoli", self.subtitle_language)
         self.backend = QComboBox()
         self.backend.addItem("CPU", "cpu")
         for index, name, _ in nvidia_gpus():
@@ -284,7 +294,7 @@ class ControlWindow(QWidget):
         self.pin.toggled.connect(self.set_pinned)
         form.addRow(self.pin)
         self.title_visible = QCheckBox("Mostra barra del titolo dei sottotitoli")
-        self.title_visible.setChecked(self.settings.get("caption_title", True))
+        self.title_visible.setChecked(self.settings.get("show_caption_title", False))
         self.title_visible.toggled.connect(self.floating.set_title_visible)
         form.addRow(self.title_visible)
         layout.addLayout(form)
@@ -301,7 +311,7 @@ class ControlWindow(QWidget):
             actions.addWidget(button)
         layout.addLayout(actions)
 
-        self.status = QLabel("Scegli tutto l’audio del computer o una singola applicazione.")
+        self.status = QLabel("Scegli tutte le applicazioni o una singola applicazione.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.detail = QLabel()
@@ -353,7 +363,7 @@ class ControlWindow(QWidget):
     def refresh_sources(self):
         previous = self.source.currentText() or self.settings.get("audio_source", "")
         self.source.clear()
-        self.source.addItem("Tutto l’audio del computer", {"kind": "system"})
+        self.source.addItem("Tutto l’audio delle app", {"kind": "system"})
         processes = {process.info["name"] for process in psutil.process_iter(["name"])
                      if process.info["name"]}
         for name in sorted(processes, key=str.casefold):
@@ -435,6 +445,7 @@ class ControlWindow(QWidget):
             "loading": "Caricamento del modello…",
             "downloading": "Download del modello in corso. Puoi lasciare aperta l’app.",
             "repairing": "Ripristino dei file del modello…",
+            "translation": "Preparazione della traduzione locale…",
             "retry": "Modello non disponibile. Nuovo tentativo tra pochi secondi.",
             "ready": f"In ascolto · {worker.active_device or 'CPU'} · Whisper {worker.active_model}",
         }
@@ -471,7 +482,7 @@ class ControlWindow(QWidget):
             "font_size": self.font.value(),
             "opacity": self.opacity.value(),
             "pinned": self.pin.isChecked(),
-            "caption_title": self.title_visible.isChecked(),
+            "show_caption_title": self.title_visible.isChecked(),
             "asr_device": self.backend.currentData(),
             "asr_model": self.model.currentText(),
         }.items():

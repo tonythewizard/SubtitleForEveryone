@@ -11,4 +11,7 @@ $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Impossibile aggiornare pip.' }
 & $python -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw 'Installazione requisiti fallita.' }
+if (-not (Test-Path -LiteralPath 'build\native\app_audio.exe')) {
+    & (Join-Path $PSScriptRoot 'build_audio_helper.ps1')
+}
 Write-Host 'Pronto. Apri run_windows.bat' -ForegroundColor Green

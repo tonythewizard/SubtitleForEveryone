@@ -18,6 +18,7 @@ from pathlib import Path
 import sysconfig
 from .hallucinations import clean_asr_text, accept_segment
 from .settings import ROOT, BUNDLED_MODELS
+from .translation import Translator
 from .vulkan import VulkanWhisper
 
 _cuda_dll_handles = []
@@ -197,7 +198,7 @@ class ASRWorker(Thread):
             try:
                 _load_cuda_dll_paths()
                 model=WhisperModel(source, device='cuda', device_index=gpu_index,
-                                   compute_type='float16', **kwargs)
+                                   compute_type='int8_float16' if size == 'large-v3' else 'float16', **kwargs)
                 import numpy as np
                 # CUDA libraries can load lazily on the first actual decode.
                 segments, _ = model.transcribe(
@@ -219,8 +220,7 @@ class ASRWorker(Thread):
         return model
 
     def _decode(self,model,audio,cfg):
-        selected=cfg.get('transcription_language',cfg.get('language','auto'))
-        language=None if selected=='auto' else selected
+        language = None
         if isinstance(model,VulkanWhisper):
             raw,detected=model.decode(audio,language)
             if cfg.get('hallucination_guard',True):raw=clean_asr_text(raw)
@@ -260,9 +260,11 @@ class ASRWorker(Thread):
         model=None; current=None; cuda_failed=set()
         previews={}
         finalized={}
+        translator = Translator()
         while not self.stop_event.is_set():
             cfg=self.settings.snapshot()
             desired=(cfg.get('asr_model','tiny'),cfg.get('asr_device','auto'))
+            max_age = float(cfg.get('max_caption_age', 10 if desired[0] == 'large-v3' else 4))
             # Until automatic GPU certification is implemented, the safe
             # baseline must start independently of any GPU runtime.
             requested=(desired[0],'cpu') if desired[1]=='auto' or desired in cuda_failed else desired
@@ -298,7 +300,7 @@ class ASRWorker(Thread):
                 continue
             # Discard outdated subtitles (bounded latency > displaying every word).
             age=time.monotonic()-captured_at
-            if age>float(cfg.get('max_caption_age',4.0)):
+            if age>max_age:
                 self.logs(f'{source["name"]}: clip vecchio ({age:.1f}s), scartato.');continue
             try:
                 self.decoding.set()
@@ -310,7 +312,7 @@ class ASRWorker(Thread):
                 if not raw:continue
                 # ASR itself can take many seconds on CPU. Never show old captions.
                 lag=time.monotonic()-captured_at
-                if lag>float(cfg.get('max_caption_age',4.0)):
+                if lag>max_age:
                     self.logs(f'{source["name"]}: frase pronta in ritardo ({lag:.1f}s), scartata.');continue
                 sid=source['id']
                 window=(source.get('_window'),language)
@@ -336,7 +338,27 @@ class ASRWorker(Thread):
                 else:
                     previews.pop(sid,None)
                     finalized[sid]=(language,words)
-                self.state.publish(' '.join(words))
+                text = ' '.join(words)
+                target = cfg.get("subtitle_language", "auto")
+                if target != "auto" and target != language:
+                    if partial:
+                        continue
+                    preparing = False
+
+                    def prepare_translation():
+                        nonlocal preparing
+                        preparing = True
+                        self.report_state("translation")
+
+                    try:
+                        text = translator.translate(text, language, target, prepare_translation)
+                    except Exception as error:
+                        self.logs(f"Traduzione non disponibile. Mostro il testo originale. {error}")
+                    finally:
+                        if preparing:
+                            self.report_state("ready")
+                if not self.stop_event.is_set() and time.monotonic() - captured_at <= max_age:
+                    self.state.publish(text)
             except Exception as ex:
                 self.logs('Errore Whisper: '+str(ex))
                 if str(requested[1]).startswith(('cuda','vulkan:')):
